@@ -1,0 +1,28 @@
+# Environment
+.env
+.env.local
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Data files (licensed / raw scraped)
+*.json
+tmp_esco_*/
+ESCO dataset - *.zip
+!.vscode/*.json
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
