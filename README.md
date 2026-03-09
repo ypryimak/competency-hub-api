@@ -178,6 +178,19 @@ Optional variables:
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_CV_BUCKET`
 - `CV_SIGNED_URL_EXPIRE_SECONDS`
+- `BACKEND_CORS_ORIGINS`
+
+`BACKEND_CORS_ORIGINS` is a comma-separated list of frontend origins allowed to call the API from a browser.
+
+Example:
+
+```text
+BACKEND_CORS_ORIGINS=http://localhost:3000,http://localhost:5173,https://your-frontend-domain.app
+```
+
+Notes:
+- in local development, if `BACKEND_CORS_ORIGINS` is empty and `ENVIRONMENT=development`, the API allows all origins;
+- in production, set explicit frontend origins instead of relying on `*`.
 
 ### 4. Apply database schema
 
@@ -261,6 +274,10 @@ The script expects the ESCO zip path in `scripts/seed_knowledge_base.py`.
 
 Docs:
 - `http://127.0.0.1:8000/api/v1/docs`
+
+If you test a local frontend against a deployed API, add the local frontend origin to `BACKEND_CORS_ORIGINS`, for example:
+- `http://localhost:3000`
+- `http://localhost:5173`
 
 ## Storage
 

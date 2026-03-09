@@ -24,8 +24,21 @@ class Settings(BaseSettings):
     # Anthropic
     # App
     ENVIRONMENT: str = "development"
+    BACKEND_CORS_ORIGINS: str = ""
     API_V1_PREFIX: str = "/api/v1"
     PROJECT_NAME: str = "CompetencyHub API"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        if self.BACKEND_CORS_ORIGINS.strip():
+            return [
+                origin.strip().rstrip("/")
+                for origin in self.BACKEND_CORS_ORIGINS.split(",")
+                if origin.strip()
+            ]
+        if self.ENVIRONMENT == "development":
+            return ["*"]
+        return []
 
     class Config:
         env_file = ".env"
