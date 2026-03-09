@@ -195,13 +195,15 @@ The knowledge base uses two external data sources:
 Use `scripts/scrape_jobs.py` to collect vacancies from public APIs and save them to JSON.
 
 Sources used by the script:
-- The Muse
 - Arbeitnow
 - RemoteOK
+- Arbeitnow API page: `https://www.arbeitnow.com/blog/job-board-api`
+- Arbeitnow terms: `https://www.arbeitnow.com/terms`
+- RemoteOK API: `https://remoteok.io/api`
 
 Important:
 - ESCO data requires attribution. This repository and the API docs include the notice: `This service uses the ESCO classification of the European Commission.`
-- Vacancy sources are subject to their own API and website terms. Before using scraped jobs outside local research, diploma work, or internal experiments, review the source-specific legal conditions.
+- Vacancy sources are subject to their own API and website terms. Before using scraped jobs outside local research, diploma work, or internal experiments, review the source-specific legal conditions and attribution requirements.
 
 Default output:
 - `scraped_jobs.json`
