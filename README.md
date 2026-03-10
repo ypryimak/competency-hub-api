@@ -307,6 +307,15 @@ Candidate CV files are stored in Supabase Storage.
 - files are accessed through signed URLs;
 - the bucket can be created automatically on first use, but it is still worth verifying in the Supabase dashboard.
 
+## Deployment
+
+The API is deployed on Railway.
+
+Public URLs:
+- API docs: `https://competency-hub-api-production.up.railway.app/api/v1/docs`
+- OpenAPI schema: `https://competency-hub-api-production.up.railway.app/api/v1/openapi.json`
+- Health check: `https://competency-hub-api-production.up.railway.app/health`
+
 ## Tests
 
 Smoke tests are plain Python scripts that call the running API.
