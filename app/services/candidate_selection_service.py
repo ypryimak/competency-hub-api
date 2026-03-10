@@ -519,8 +519,51 @@ class CandidateSelectionService:
 
     async def calculate_vikor(self, db: AsyncSession, selection_id: int, user_id: int) -> VIKORResult:
         selection = await self._get_selection_orm(db, selection_id, user_id)
+        return await self._calculate_vikor_for_selection(db, selection)
+
+    async def process_selection_deadline(self, db: AsyncSession, selection_id: int) -> Selection:
+        selection = await self._get_selection_for_status_check(db, selection_id)
+        if selection.status != SelectionStatus.EXPERT_EVALUATION:
+            return selection
+
+        experts = (
+            await db.execute(select(SelectionExpert).where(SelectionExpert.selection_id == selection_id))
+        ).scalars().all()
+        candidate_ids = await self._get_selection_candidate_ids(db, selection_id)
+        competency_ids = await self._get_final_competency_ids(db, selection.model_id)
+
+        if experts and candidate_ids and competency_ids:
+            try:
+                await self._ensure_selection_scoring_complete(
+                    db,
+                    selection_id,
+                    experts,
+                    candidate_ids,
+                    competency_ids,
+                )
+            except HTTPException:
+                selection.status = SelectionStatus.CANCELLED
+                await db.flush()
+                await db.refresh(selection)
+                return selection
+            await self._calculate_vikor_for_selection(db, selection)
+            await db.refresh(selection)
+            return selection
+
+        selection.status = SelectionStatus.CANCELLED
+        await db.flush()
+        await db.refresh(selection)
+        return selection
+
+    async def _calculate_vikor_for_selection(
+        self,
+        db: AsyncSession,
+        selection: Selection,
+    ) -> VIKORResult:
         if selection.status != SelectionStatus.EXPERT_EVALUATION:
             raise HTTPException(status_code=400, detail="VIKOR can only run in expert evaluation status")
+
+        selection_id = selection.id
         experts = (
             await db.execute(select(SelectionExpert).where(SelectionExpert.selection_id == selection_id))
         ).scalars().all()

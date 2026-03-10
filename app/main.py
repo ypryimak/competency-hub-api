@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1.router import api_router
 from app.api.v1.openapi_metadata import apply_openapi_metadata
+from app.services.background_jobs import background_job_runner
 
 APP_DESCRIPTION = """
 Backend for competency models, expert evaluation, and candidate selection.
@@ -30,9 +31,9 @@ OPENAPI_TAGS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # startup
+    background_job_runner.start()
     yield
-    # shutdown
+    await background_job_runner.stop()
 
 
 app = FastAPI(

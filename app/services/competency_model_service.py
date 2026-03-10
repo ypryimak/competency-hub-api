@@ -522,9 +522,21 @@ class CompetencyModelService:
 
     async def calculate_opa(self, db: AsyncSession, model_id: int, user_id: int) -> OPAResult:
         model = await self._get_model_orm(db, model_id, user_id)
+        return await self._calculate_opa_for_model(db, model)
+
+    async def calculate_opa_for_deadline(self, db: AsyncSession, model_id: int) -> OPAResult:
+        model = await self._get_model_for_status_check(db, model_id)
+        return await self._calculate_opa_for_model(db, model)
+
+    async def _calculate_opa_for_model(
+        self,
+        db: AsyncSession,
+        model: CompetencyModel,
+    ) -> OPAResult:
         if model.status != ModelStatus.EXPERT_EVALUATION:
             raise HTTPException(status_code=400, detail="OPA can only run in expert evaluation status")
 
+        model_id = model.id
         experts = (
             await db.execute(select(ModelExpert).where(ModelExpert.model_id == model_id))
         ).scalars().all()

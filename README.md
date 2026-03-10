@@ -179,6 +179,8 @@ Optional variables:
 - `SUPABASE_CV_BUCKET`
 - `CV_SIGNED_URL_EXPIRE_SECONDS`
 - `BACKEND_CORS_ORIGINS`
+- `BACKGROUND_JOBS_ENABLED`
+- `BACKGROUND_JOBS_POLL_SECONDS`
 
 `BACKEND_CORS_ORIGINS` is a comma-separated list of frontend origins allowed to call the API from a browser.
 
@@ -191,6 +193,7 @@ BACKEND_CORS_ORIGINS=http://localhost:3000,http://localhost:5173,https://your-fr
 Notes:
 - in local development, if `BACKEND_CORS_ORIGINS` is empty and `ENVIRONMENT=development`, the API allows all origins;
 - in production, set explicit frontend origins instead of relying on `*`.
+- background jobs are disabled by default; enable them explicitly only on the instance that should process deadlines.
 
 ### 4. Apply database schema
 
@@ -278,6 +281,22 @@ Docs:
 If you test a local frontend against a deployed API, add the local frontend origin to `BACKEND_CORS_ORIGINS`, for example:
 - `http://localhost:3000`
 - `http://localhost:5173`
+
+## Background Jobs
+
+The API can poll for overdue evaluations and process them automatically.
+
+Environment variables:
+- `BACKGROUND_JOBS_ENABLED=true|false`
+- `BACKGROUND_JOBS_POLL_SECONDS=60`
+
+Current automated actions:
+- calculate OPA for competency models whose expert-evaluation deadline has passed;
+- calculate VIKOR for selections whose expert-evaluation deadline has passed;
+- cancel a selection automatically if its deadline has passed but the scoring matrix is incomplete.
+
+Recommended deployment rule:
+- enable background jobs only on one instance or one dedicated worker process to avoid duplicate processing.
 
 ## Storage
 

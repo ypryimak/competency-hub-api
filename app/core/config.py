@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     BACKEND_CORS_ORIGINS: str = ""
     API_V1_PREFIX: str = "/api/v1"
     PROJECT_NAME: str = "CompetencyHub API"
+    BACKGROUND_JOBS_ENABLED: bool = False
+    BACKGROUND_JOBS_POLL_SECONDS: int = 60
 
     @property
     def cors_origins(self) -> list[str]:
