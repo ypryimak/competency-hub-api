@@ -1,11 +1,12 @@
 from typing import Sequence
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import aliased, selectinload
 
+from app.core.config import settings
 from app.models.models import (
     Competency,
     CompetencyCollection,
@@ -861,14 +862,14 @@ class KnowledgeBaseService:
 
     async def parse_job_competencies(self, db: AsyncSession, job_id: int) -> ParseCompetenciesResponse:
         job = await self.get_job(db, job_id)
-        competency_map = await self._get_competency_map(db)
+        competency_map = await self._get_job_competency_map(db, job.profession_id)
         return await self._parse_job_with_competency_map(db, job, competency_map)
 
     async def parse_all_jobs_for_profession(
         self, db: AsyncSession, profession_id: int
     ) -> list[ParseCompetenciesResponse]:
         jobs = await self.get_jobs(db, profession_id=profession_id)
-        competency_map = await self._get_competency_map(db)
+        competency_map = await self._get_job_competency_map(db, profession_id)
         results = []
         for job in jobs:
             job_id = job.id
@@ -914,18 +915,32 @@ class KnowledgeBaseService:
             )
         )
         for row in competency_counts:
+            frequency = round(row.cnt / total_jobs, 4)
+            if row.cnt < settings.JOB_DERIVED_MIN_COUNT:
+                continue
+            if frequency < settings.JOB_DERIVED_MIN_FREQUENCY:
+                continue
             db.add(
                 ProfessionCompetency(
                     profession_id=profession_id,
                     competency_id=row.competency_id,
                     link_type=LINK_TYPE_JOB_DERIVED,
-                    weight=round(row.cnt / total_jobs, 4),
+                    weight=frequency,
                 )
             )
         await db.flush()
         return RecalculateProfessionCompetenciesResponse(
             profession_id=profession_id,
-            updated_count=len(competency_counts),
+            updated_count=(
+                len(
+                    [
+                        row
+                        for row in competency_counts
+                        if row.cnt >= settings.JOB_DERIVED_MIN_COUNT
+                        and round(row.cnt / total_jobs, 4) >= settings.JOB_DERIVED_MIN_FREQUENCY
+                    ]
+                )
+            ),
         )
 
     async def _get_profession_competency(
@@ -1002,6 +1017,107 @@ class KnowledgeBaseService:
     async def _get_competency_map(self, db: AsyncSession) -> dict[int, str]:
         result = await db.execute(select(Competency.id, Competency.name))
         return {row.id: row.name for row in result.all()}
+
+    async def _get_job_competency_map(
+        self,
+        db: AsyncSession,
+        profession_id: int,
+    ) -> dict[int, list[str]]:
+        profession_row = (
+            await db.execute(
+                select(
+                    Profession.id,
+                    Profession.profession_group_id,
+                    Profession.parent_profession_id,
+                ).where(Profession.id == profession_id)
+            )
+        ).one_or_none()
+        if not profession_row:
+            return await self._get_competency_map(db)
+
+        current_profession_link_types = (
+            LINK_TYPE_ESCO_ESSENTIAL,
+            LINK_TYPE_ESCO_OPTIONAL,
+            LINK_TYPE_MANUAL,
+        )
+        neighbor_profession_ids: set[int] = {profession_id}
+        if profession_row.parent_profession_id is not None:
+            neighbor_profession_ids.add(profession_row.parent_profession_id)
+        child_ids = (
+            await db.execute(select(Profession.id).where(Profession.parent_profession_id == profession_id))
+        ).scalars().all()
+        neighbor_profession_ids.update(child_ids)
+
+        if profession_row.profession_group_id is not None:
+            group_profession_ids = (
+                await db.execute(
+                    select(Profession.id).where(
+                        Profession.profession_group_id == profession_row.profession_group_id
+                    )
+                )
+            ).scalars().all()
+            neighbor_profession_ids.update(group_profession_ids)
+
+        direct_candidate_ids = set(
+            (
+                await db.execute(
+                    select(ProfessionCompetency.competency_id).where(
+                        ProfessionCompetency.profession_id == profession_id,
+                        ProfessionCompetency.link_type.in_(current_profession_link_types),
+                    )
+                )
+            ).scalars().all()
+        )
+        neighborhood_candidate_ids = set(
+            (
+                await db.execute(
+                    select(ProfessionCompetency.competency_id)
+                    .where(
+                        ProfessionCompetency.profession_id.in_(neighbor_profession_ids),
+                        ProfessionCompetency.link_type.in_(
+                            (LINK_TYPE_ESCO_ESSENTIAL, LINK_TYPE_ESCO_OPTIONAL)
+                        ),
+                    )
+                    .distinct()
+                )
+            ).scalars().all()
+        )
+        candidate_ids = direct_candidate_ids | neighborhood_candidate_ids
+
+        if not candidate_ids:
+            return await self._get_competency_map(db)
+
+        result = await db.execute(
+            select(
+                Competency.id,
+                Competency.name,
+                CompetencyLabel.label,
+            )
+            .select_from(Competency)
+            .outerjoin(
+                CompetencyLabel,
+                and_(
+                    CompetencyLabel.competency_id == Competency.id,
+                    CompetencyLabel.label_type.in_(("preferred", "alternative")),
+                ),
+            )
+            .where(Competency.id.in_(candidate_ids))
+            .order_by(Competency.id)
+        )
+        alias_map: dict[int, list[str]] = {}
+        seen_per_competency: dict[int, set[str]] = {}
+        for competency_id, name, label in result.all():
+            alias_map.setdefault(competency_id, [])
+            seen_per_competency.setdefault(competency_id, set())
+            for term in (name, label):
+                if not term:
+                    continue
+                normalized = term.strip().lower()
+                if not normalized or normalized in seen_per_competency[competency_id]:
+                    continue
+                seen_per_competency[competency_id].add(normalized)
+                alias_map[competency_id].append(term.strip())
+        return alias_map
 
     async def _parse_job_with_competency_map(
         self,

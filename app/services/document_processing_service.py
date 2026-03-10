@@ -71,9 +71,31 @@ def extract_candidate_tokens(text: str, lang: str = "en") -> list[str]:
     return list(tokens)
 
 
+def _normalize_competency_terms(
+    competency_terms: dict[int, str | list[str] | tuple[str, ...] | set[str]]
+) -> dict[int, list[str]]:
+    normalized: dict[int, list[str]] = {}
+    for competency_id, value in competency_terms.items():
+        if isinstance(value, str):
+            raw_terms = [value]
+        else:
+            raw_terms = list(value)
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for term in raw_terms:
+            normalized_term = _normalize(term)
+            if not normalized_term or normalized_term in seen:
+                continue
+            seen.add(normalized_term)
+            cleaned.append(normalized_term)
+        if cleaned:
+            normalized[competency_id] = cleaned
+    return normalized
+
+
 def match_competencies(
     candidate_tokens: list[str],
-    competency_map: dict[int, str],  # {id: name}
+    competency_terms: dict[int, str | list[str] | tuple[str, ...] | set[str]],
 ) -> tuple[list[int], list[int], list[str]]:
     """
     Звіряє токени з переліком компетенцій.
@@ -87,10 +109,15 @@ def match_competencies(
         matched_names    — їх назви
         unrecognized     — токени, що не знайшли пари
     """
-    normalized_map = {cid: _normalize(name) for cid, name in competency_map.items()}
+    display_names = {
+        competency_id: value if isinstance(value, str) else next(iter(value), "")
+        for competency_id, value in competency_terms.items()
+    }
+    normalized_map = _normalize_competency_terms(competency_terms)
     exact_lookup: dict[str, list[int]] = {}
-    for cid, cname in normalized_map.items():
-        exact_lookup.setdefault(cname, []).append(cid)
+    for cid, aliases in normalized_map.items():
+        for alias in aliases:
+            exact_lookup.setdefault(alias, []).append(cid)
 
     matched_ids: list[int] = []
     matched_names: list[str] = []
@@ -104,7 +131,7 @@ def match_competencies(
             if cid in used_ids:
                 continue
             matched_ids.append(cid)
-            matched_names.append(competency_map[cid])
+            matched_names.append(display_names.get(cid) or normalized_map[cid][0])
             used_ids.add(cid)
             found = True
             break
@@ -115,16 +142,19 @@ def match_competencies(
         # 2. Обмежене часткове входження тільки для довших multi-word token-ів.
         # Це зменшує шум типу "model" -> десятки нерелевантних skills.
         if " " in token and len(token) >= 6:
-            for cid, cname in normalized_map.items():
+            for cid, aliases in normalized_map.items():
                 if cid in used_ids:
                     continue
-                if len(cname) < 4 or " " not in cname:
-                    continue
-                if cname in token or token in cname:
-                    matched_ids.append(cid)
-                    matched_names.append(competency_map[cid])
-                    used_ids.add(cid)
-                    found = True
+                for alias in aliases:
+                    if len(alias) < 4 or " " not in alias:
+                        continue
+                    if alias in token or token in alias:
+                        matched_ids.append(cid)
+                        matched_names.append(display_names.get(cid) or normalized_map[cid][0])
+                        used_ids.add(cid)
+                        found = True
+                        break
+                if found:
                     break
 
         if not found and len(token) > 3:
@@ -139,7 +169,7 @@ class DocumentProcessingService:
     def parse_text(
         self,
         text: str,
-        competency_map: dict[int, str],
+        competency_map: dict[int, str | list[str] | tuple[str, ...] | set[str]],
         lang: str = "en",
     ) -> tuple[list[int], list[str], list[str]]:
         """

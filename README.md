@@ -181,6 +181,8 @@ Optional variables:
 - `BACKEND_CORS_ORIGINS`
 - `BACKGROUND_JOBS_ENABLED`
 - `BACKGROUND_JOBS_POLL_SECONDS`
+- `JOB_DERIVED_MIN_COUNT`
+- `JOB_DERIVED_MIN_FREQUENCY`
 
 `BACKEND_CORS_ORIGINS` is a comma-separated list of frontend origins allowed to call the API from a browser.
 

@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "CompetencyHub API"
     BACKGROUND_JOBS_ENABLED: bool = False
     BACKGROUND_JOBS_POLL_SECONDS: int = 60
+    JOB_DERIVED_MIN_COUNT: int = 2
+    JOB_DERIVED_MIN_FREQUENCY: float = 0.03
 
     @property
     def cors_origins(self) -> list[str]:
