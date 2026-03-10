@@ -40,17 +40,17 @@ def create_catalog(admin_token: str, marker: str) -> tuple[dict, dict, list[dict
     post(
         admin_token,
         f"/professions/{profession['id']}/competencies",
-        {"competency_id": competencies[0]["id"], "relation_type": "essential", "weight": 0.9, "source": "manual"},
+        {"competency_id": competencies[0]["id"], "link_type": "manual", "weight": 0.9},
     )
     post(
         admin_token,
         f"/professions/{profession['id']}/competencies",
-        {"competency_id": competencies[1]["id"], "relation_type": "essential", "weight": 0.8, "source": "manual"},
+        {"competency_id": competencies[1]["id"], "link_type": "manual", "weight": 0.8},
     )
     post(
         admin_token,
         f"/professions/{profession['id']}/competencies",
-        {"competency_id": competencies[2]["id"], "relation_type": "optional", "weight": 0.2, "source": "manual"},
+        {"competency_id": competencies[2]["id"], "link_type": "manual", "weight": 0.2},
     )
     return group, profession, competencies
 
@@ -215,7 +215,7 @@ def main() -> None:
         hr_token,
         f"/candidates/{candidate_1['id']}/cv",
         "candidate.txt",
-        f"Python FastAPI experience for {profession['name']}".encode("utf-8"),
+        f"{competencies[0]['name']} {competencies[1]['name']} experience for {profession['name']}".encode("utf-8"),
         expected=200,
     )
     get(hr_token, f"/candidates/{candidate_1['id']}/cv-url")
@@ -241,7 +241,7 @@ def main() -> None:
         hr_token,
         f"/candidates/{candidate_1['id']}/cv",
         "candidate.txt",
-        f"Python FastAPI experience for {profession['name']}".encode("utf-8"),
+        f"{competencies[0]['name']} {competencies[1]['name']} experience for {profession['name']}".encode("utf-8"),
         expected=200,
     )
 

@@ -50,6 +50,7 @@ from app.models.models import (
     ProfessionGroup,
     ProfessionLabel,
 )
+from app.services.knowledge_base_service import knowledge_base_service
 
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
@@ -390,19 +391,22 @@ async def seed_profession_competencies(
     session, zip_path: Path, profession_uri_map: dict[str, int], competency_uri_map: dict[str, int]
 ) -> int:
     rows = read_zip_csv(zip_path, "occupationSkillRelations_en.csv")
-    relation_weights = {"essential": 1.0, "optional": 0.5}
+    relation_to_link_type = {
+        "essential": "esco_essential",
+        "optional": "esco_optional",
+    }
     insert_rows = []
     for row in rows:
         profession_id = profession_uri_map.get(row["occupationUri"])
         competency_id = competency_uri_map.get(row["skillUri"])
-        if profession_id and competency_id:
+        link_type = relation_to_link_type.get(row["relationType"])
+        if profession_id and competency_id and link_type:
             insert_rows.append(
                 {
                     "profession_id": profession_id,
                     "competency_id": competency_id,
-                    "relation_type": row["relationType"],
-                    "weight": relation_weights.get(row["relationType"]),
-                    "source": "esco",
+                    "link_type": link_type,
+                    "weight": None,
                 }
             )
     inserted = 0
@@ -411,11 +415,37 @@ async def seed_profession_competencies(
             session,
             ProfessionCompetency.__table__,
             chunk,
-            ["profession_id", "competency_id", "relation_type"],
+            ["profession_id", "competency_id", "link_type"],
         )
     await session.commit()
     print(f"  OK Profession-competency relations: {inserted} inserted")
     return inserted
+
+
+async def enrich_jobs_and_profession_competencies(session) -> None:
+    profession_ids = (
+        await session.execute(
+            select(Job.profession_id)
+            .where(Job.profession_id.isnot(None))
+            .distinct()
+            .order_by(Job.profession_id)
+        )
+    ).scalars().all()
+    if not profession_ids:
+        print("  INFO No jobs found for parsing")
+        return
+
+    print("  Parsing competencies from scraped jobs ...")
+    for profession_id in profession_ids:
+        await knowledge_base_service.parse_all_jobs_for_profession(session, profession_id)
+
+    await session.commit()
+
+    print("  Recalculating job-derived profession competencies ...")
+    for profession_id in profession_ids:
+        await knowledge_base_service.recalculate_profession_competencies(session, profession_id)
+
+    await session.commit()
 
 
 async def seed_competency_relations(session, zip_path: Path, competency_uri_map: dict[str, int]) -> int:
@@ -598,6 +628,9 @@ async def main() -> None:
         if not args.skip_jobs:
             print("\n--- STEP 12: Jobs ---")
             await seed_jobs(session, scraped_jobs)
+
+            print("\n--- STEP 13: Parse jobs and derive profession competencies ---")
+            await enrich_jobs_and_profession_competencies(session)
 
     print("\n=== DONE ===\n")
 

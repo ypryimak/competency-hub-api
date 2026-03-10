@@ -3,6 +3,7 @@ from typing import Sequence
 from fastapi import HTTPException
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import aliased, selectinload
 
 from app.models.models import (
@@ -50,8 +51,12 @@ from app.schemas.knowledge_base import (
 from app.services.document_processing_service import document_processing_service
 
 
-DERIVED_RELATION_TYPE = "derived"
-DERIVED_SOURCE = "job_parser"
+LINK_TYPE_ESCO_ESSENTIAL = "esco_essential"
+LINK_TYPE_ESCO_OPTIONAL = "esco_optional"
+LINK_TYPE_JOB_DERIVED = "job_derived"
+LINK_TYPE_MANUAL = "manual"
+
+EDITABLE_LINK_TYPES = {LINK_TYPE_MANUAL}
 
 
 class KnowledgeBaseService:
@@ -442,39 +447,40 @@ class KnowledgeBaseService:
             select(ProfessionCompetency, Competency.name)
             .join(Competency, Competency.id == ProfessionCompetency.competency_id)
             .where(ProfessionCompetency.profession_id == profession_id)
-            .order_by(
-                ProfessionCompetency.weight.desc().nullslast(),
-                ProfessionCompetency.relation_type,
-                Competency.name,
-            )
         )
-        return [self._profession_competency_row_to_dict(row) for row in result.all()]
+        rows = [self._profession_competency_row_to_dict(row) for row in result.all()]
+        return sorted(rows, key=self._profession_competency_sort_key)
 
     async def add_profession_competency(
         self, db: AsyncSession, profession_id: int, data: ProfessionCompetencyCreate
     ) -> dict:
         await self.get_profession(db, profession_id)
         await self.get_competency(db, data.competency_id)
+        if data.link_type != LINK_TYPE_MANUAL:
+            raise HTTPException(
+                status_code=400,
+                detail="Only manual profession competency links can be created through the API",
+            )
         await self._ensure_missing(
             db,
             select(ProfessionCompetency).where(
                 ProfessionCompetency.profession_id == profession_id,
                 ProfessionCompetency.competency_id == data.competency_id,
-                ProfessionCompetency.relation_type == data.relation_type,
+                ProfessionCompetency.link_type == data.link_type,
             ),
             "Profession competency link already exists",
         )
+        self._validate_profession_competency_weight(data.link_type, data.weight)
         obj = ProfessionCompetency(
             profession_id=profession_id,
             competency_id=data.competency_id,
-            relation_type=data.relation_type,
+            link_type=data.link_type,
             weight=data.weight,
-            source=data.source,
         )
         db.add(obj)
         await db.flush()
         return await self._get_profession_competency_dict(
-            db, profession_id, data.competency_id, data.relation_type
+            db, profession_id, data.competency_id, data.link_type
         )
 
     async def update_profession_competency(
@@ -482,26 +488,30 @@ class KnowledgeBaseService:
         db: AsyncSession,
         profession_id: int,
         competency_id: int,
-        relation_type: str,
+        link_type: str,
         data: ProfessionCompetencyUpdate,
     ) -> dict:
         obj = await self._get_profession_competency(
-            db, profession_id, competency_id, relation_type
+            db, profession_id, competency_id, link_type
         )
+        if obj.link_type not in EDITABLE_LINK_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail="Only manual profession competency links can be updated",
+            )
         if data.weight is not None:
             obj.weight = data.weight
-        if data.source is not None:
-            obj.source = data.source
+        self._validate_profession_competency_weight(obj.link_type, obj.weight)
         await db.flush()
         return await self._get_profession_competency_dict(
-            db, profession_id, competency_id, relation_type
+            db, profession_id, competency_id, link_type
         )
 
     async def delete_profession_competency(
-        self, db: AsyncSession, profession_id: int, competency_id: int, relation_type: str
+        self, db: AsyncSession, profession_id: int, competency_id: int, link_type: str
     ) -> None:
         await db.delete(
-            await self._get_profession_competency(db, profession_id, competency_id, relation_type)
+            await self._get_profession_competency(db, profession_id, competency_id, link_type)
         )
 
     async def get_competency_relations(
@@ -852,34 +862,27 @@ class KnowledgeBaseService:
     async def parse_job_competencies(self, db: AsyncSession, job_id: int) -> ParseCompetenciesResponse:
         job = await self.get_job(db, job_id)
         competency_map = await self._get_competency_map(db)
-        matched_ids, matched_names, unrecognized = document_processing_service.parse_text(
-            text=job.description,
-            competency_map=competency_map,
-        )
-        await db.execute(delete(JobCompetency).where(JobCompetency.job_id == job_id))
-        for competency_id in matched_ids:
-            db.add(JobCompetency(job_id=job_id, competency_id=competency_id))
-        await db.flush()
-        return ParseCompetenciesResponse(
-            matched_competency_ids=matched_ids,
-            matched_competency_names=matched_names,
-            unrecognized_tokens=unrecognized,
-        )
+        return await self._parse_job_with_competency_map(db, job, competency_map)
 
     async def parse_all_jobs_for_profession(
         self, db: AsyncSession, profession_id: int
     ) -> list[ParseCompetenciesResponse]:
         jobs = await self.get_jobs(db, profession_id=profession_id)
+        competency_map = await self._get_competency_map(db)
         results = []
         for job in jobs:
+            job_id = job.id
             try:
-                results.append(await self.parse_job_competencies(db, job.id))
+                results.append(
+                    await self._parse_job_with_competency_map(db, job, competency_map)
+                )
             except Exception:
+                await db.rollback()
                 results.append(
                     ParseCompetenciesResponse(
                         matched_competency_ids=[],
                         matched_competency_names=[],
-                        unrecognized_tokens=[f"[error parsing job {job.id}]"],
+                        unrecognized_tokens=[f"[error parsing job {job_id}]"],
                     )
                 )
         return results
@@ -907,7 +910,7 @@ class KnowledgeBaseService:
         await db.execute(
             delete(ProfessionCompetency).where(
                 ProfessionCompetency.profession_id == profession_id,
-                ProfessionCompetency.relation_type == DERIVED_RELATION_TYPE,
+                ProfessionCompetency.link_type == LINK_TYPE_JOB_DERIVED,
             )
         )
         for row in competency_counts:
@@ -915,9 +918,8 @@ class KnowledgeBaseService:
                 ProfessionCompetency(
                     profession_id=profession_id,
                     competency_id=row.competency_id,
-                    relation_type=DERIVED_RELATION_TYPE,
+                    link_type=LINK_TYPE_JOB_DERIVED,
                     weight=round(row.cnt / total_jobs, 4),
-                    source=DERIVED_SOURCE,
                 )
             )
         await db.flush()
@@ -927,13 +929,13 @@ class KnowledgeBaseService:
         )
 
     async def _get_profession_competency(
-        self, db: AsyncSession, profession_id: int, competency_id: int, relation_type: str
+        self, db: AsyncSession, profession_id: int, competency_id: int, link_type: str
     ) -> ProfessionCompetency:
         result = await db.execute(
             select(ProfessionCompetency).where(
                 ProfessionCompetency.profession_id == profession_id,
                 ProfessionCompetency.competency_id == competency_id,
-                ProfessionCompetency.relation_type == relation_type,
+                ProfessionCompetency.link_type == link_type,
             )
         )
         obj = result.scalar_one_or_none()
@@ -942,7 +944,7 @@ class KnowledgeBaseService:
         return obj
 
     async def _get_profession_competency_dict(
-        self, db: AsyncSession, profession_id: int, competency_id: int, relation_type: str
+        self, db: AsyncSession, profession_id: int, competency_id: int, link_type: str
     ) -> dict:
         result = await db.execute(
             select(ProfessionCompetency, Competency.name)
@@ -950,7 +952,7 @@ class KnowledgeBaseService:
             .where(
                 ProfessionCompetency.profession_id == profession_id,
                 ProfessionCompetency.competency_id == competency_id,
-                ProfessionCompetency.relation_type == relation_type,
+                ProfessionCompetency.link_type == link_type,
             )
         )
         return self._profession_competency_row_to_dict(result.one())
@@ -959,10 +961,38 @@ class KnowledgeBaseService:
         return {
             "competency_id": row.ProfessionCompetency.competency_id,
             "competency_name": row.name,
-            "relation_type": row.ProfessionCompetency.relation_type,
+            "link_type": row.ProfessionCompetency.link_type,
             "weight": None if row.ProfessionCompetency.weight is None else float(row.ProfessionCompetency.weight),
-            "source": row.ProfessionCompetency.source,
         }
+
+    def _profession_competency_sort_key(self, row: dict) -> tuple[float, str, str]:
+        weight = row["weight"] if row["weight"] is not None else 0.0
+        return (
+            -self._profession_competency_score(row["link_type"], weight),
+            row["link_type"],
+            row["competency_name"],
+        )
+
+    def _profession_competency_score(self, link_type: str, weight: float) -> float:
+        base_scores = {
+            LINK_TYPE_ESCO_ESSENTIAL: 2.0,
+            LINK_TYPE_MANUAL: 1.5,
+            LINK_TYPE_ESCO_OPTIONAL: 1.0,
+            LINK_TYPE_JOB_DERIVED: 0.0,
+        }
+        return base_scores.get(link_type, 0.0) + float(weight or 0.0)
+
+    def _validate_profession_competency_weight(self, link_type: str, weight: float | None) -> None:
+        if link_type in (LINK_TYPE_ESCO_ESSENTIAL, LINK_TYPE_ESCO_OPTIONAL) and weight is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="ESCO profession competency links must not include a weight",
+            )
+        if link_type in (LINK_TYPE_JOB_DERIVED, LINK_TYPE_MANUAL) and weight is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Manual and job-derived profession competency links require a weight",
+            )
 
     async def _ensure_missing(self, db: AsyncSession, query, detail: str) -> None:
         result = await db.execute(query)
@@ -972,6 +1002,28 @@ class KnowledgeBaseService:
     async def _get_competency_map(self, db: AsyncSession) -> dict[int, str]:
         result = await db.execute(select(Competency.id, Competency.name))
         return {row.id: row.name for row in result.all()}
+
+    async def _parse_job_with_competency_map(
+        self,
+        db: AsyncSession,
+        job: Job,
+        competency_map: dict[int, str],
+    ) -> ParseCompetenciesResponse:
+        matched_ids, matched_names, unrecognized = document_processing_service.parse_text(
+            text=job.description,
+            competency_map=competency_map,
+        )
+        await db.execute(delete(JobCompetency).where(JobCompetency.job_id == job.id))
+        if matched_ids:
+            rows = [{"job_id": job.id, "competency_id": competency_id} for competency_id in matched_ids]
+            stmt = pg_insert(JobCompetency.__table__).values(rows)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["job_id", "competency_id"])
+            await db.execute(stmt)
+        return ParseCompetenciesResponse(
+            matched_competency_ids=matched_ids,
+            matched_competency_names=matched_names,
+            unrecognized_tokens=unrecognized,
+        )
 
 
 knowledge_base_service = KnowledgeBaseService()

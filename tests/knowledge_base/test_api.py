@@ -8,7 +8,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tests.smoke_common import auth_headers, delete, ensure_admin, get, patch, post, suffix
+from tests.smoke_common import BASE_URL, auth_headers, delete, ensure_admin, get, patch, post, suffix
 
 
 def main() -> None:
@@ -156,15 +156,14 @@ def main() -> None:
         f"/professions/{profession['id']}/competencies",
         {
             "competency_id": competencies[0]["id"],
-            "relation_type": "essential",
+            "link_type": "manual",
             "weight": 0.9,
-            "source": "manual",
         },
     )
     patch(
         token,
-        f"/professions/{profession['id']}/competencies/{competencies[0]['id']}/essential",
-        {"weight": 1.0, "source": "manual-test"},
+        f"/professions/{profession['id']}/competencies/{competencies[0]['id']}/manual",
+        {"weight": 1.0},
     )
     get(token, f"/professions/{profession['id']}/competencies")
 
@@ -215,7 +214,7 @@ def main() -> None:
 
     print("\n[6] Cleanup")
     response = requests.delete(
-        f"http://127.0.0.1:8000/api/v1/jobs/{jobs[0]['id']}/competencies/{competencies[0]['id']}",
+        f"{BASE_URL}/jobs/{jobs[0]['id']}/competencies/{competencies[0]['id']}",
         headers=auth_headers(token),
     )
     if response.status_code not in (204, 404):
@@ -233,7 +232,7 @@ def main() -> None:
         token,
         f"/competency-relations/{relation['source_competency_id']}/{relation['target_competency_id']}/{relation['relation_type']}",
     )
-    delete(token, f"/professions/{profession['id']}/competencies/{competencies[0]['id']}/essential")
+    delete(token, f"/professions/{profession['id']}/competencies/{competencies[0]['id']}/manual")
     delete(token, f"/competencies/{competencies[0]['id']}/groups/{competency_group['id']}")
     delete(token, f"/competencies/{competencies[0]['id']}/labels/{competency_label['id']}")
     delete(token, f"/professions/{profession['id']}/labels/{profession_label['id']}")

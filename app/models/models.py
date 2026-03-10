@@ -39,12 +39,14 @@ class User(Base):
     emails: Mapped[List["Email"]] = relationship(back_populates="user")
     competency_models: Mapped[List["CompetencyModel"]] = relationship(back_populates="creator")
     accepted_competency_model_invites: Mapped[List["ExpertInvite"]] = relationship(
-        foreign_keys="ExpertInvite.accepted_by_user_id"
+        foreign_keys="ExpertInvite.accepted_by_user_id",
+        back_populates="accepted_by_user",
     )
     selections: Mapped[List["Selection"]] = relationship(back_populates="creator")
     candidates: Mapped[List["Candidate"]] = relationship(back_populates="creator")
     accepted_selection_invites: Mapped[List["SelectionExpertInvite"]] = relationship(
-        foreign_keys="SelectionExpertInvite.accepted_by_user_id"
+        foreign_keys="SelectionExpertInvite.accepted_by_user_id",
+        back_populates="accepted_by_user",
     )
 
 
@@ -70,7 +72,7 @@ class ProfessionGroup(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     esco_uri: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     code: Mapped[Optional[str]] = mapped_column(String)
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     parent_group_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("job.profession_groups.id")
@@ -91,7 +93,7 @@ class Profession(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     esco_uri: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     code: Mapped[Optional[str]] = mapped_column(String)
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     profession_group_id: Mapped[int] = mapped_column(
         ForeignKey("job.profession_groups.id"),
@@ -153,7 +155,7 @@ class CompetencyGroup(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     esco_uri: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     code: Mapped[Optional[str]] = mapped_column(String)
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     parent_group_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("job.competency_groups.id")
@@ -176,7 +178,7 @@ class Competency(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     esco_uri: Mapped[Optional[str]] = mapped_column(String, unique=True)
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     competency_type: Mapped[Optional[str]] = mapped_column(String)
 
@@ -257,7 +259,7 @@ class CompetencyGroupMember(Base):
 class ProfessionCompetency(Base):
     __tablename__ = "profession_competencies"
     __table_args__ = (
-        UniqueConstraint("profession_id", "competency_id", "relation_type"),
+        UniqueConstraint("profession_id", "competency_id", "link_type"),
         {"schema": "job"},
     )
 
@@ -269,9 +271,8 @@ class ProfessionCompetency(Base):
         ForeignKey("job.competencies.id"),
         primary_key=True,
     )
-    relation_type: Mapped[str] = mapped_column(String, primary_key=True)
+    link_type: Mapped[str] = mapped_column(String, primary_key=True)
     weight: Mapped[Optional[float]] = mapped_column(Numeric)
-    source: Mapped[Optional[str]] = mapped_column(String)
 
     profession: Mapped["Profession"] = relationship(back_populates="profession_competencies")
     competency: Mapped["Competency"] = relationship(back_populates="profession_links")
@@ -490,7 +491,8 @@ class ExpertInvite(Base):
 
     model: Mapped["CompetencyModel"] = relationship(back_populates="expert_invites")
     accepted_by_user: Mapped[Optional["User"]] = relationship(
-        foreign_keys=[accepted_by_user_id]
+        foreign_keys=[accepted_by_user_id],
+        back_populates="accepted_competency_model_invites",
     )
 
 
@@ -725,7 +727,8 @@ class SelectionExpertInvite(Base):
 
     selection: Mapped["Selection"] = relationship(back_populates="expert_invites")
     accepted_by_user: Mapped[Optional["User"]] = relationship(
-        foreign_keys=[accepted_by_user_id]
+        foreign_keys=[accepted_by_user_id],
+        back_populates="accepted_selection_invites",
     )
 
 

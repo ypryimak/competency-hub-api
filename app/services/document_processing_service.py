@@ -88,6 +88,9 @@ def match_competencies(
         unrecognized     — токени, що не знайшли пари
     """
     normalized_map = {cid: _normalize(name) for cid, name in competency_map.items()}
+    exact_lookup: dict[str, list[int]] = {}
+    for cid, cname in normalized_map.items():
+        exact_lookup.setdefault(cname, []).append(cid)
 
     matched_ids: list[int] = []
     matched_names: list[str] = []
@@ -97,29 +100,32 @@ def match_competencies(
     for token in candidate_tokens:
         found = False
         # 1. Точний збіг
-        for cid, cname in normalized_map.items():
+        for cid in exact_lookup.get(token, []):
             if cid in used_ids:
                 continue
-            if token == cname:
-                matched_ids.append(cid)
-                matched_names.append(competency_map[cid])
-                used_ids.add(cid)
-                found = True
-                break
+            matched_ids.append(cid)
+            matched_names.append(competency_map[cid])
+            used_ids.add(cid)
+            found = True
+            break
 
         if found:
             continue
 
-        # 2. Часткове входження
-        for cid, cname in normalized_map.items():
-            if cid in used_ids:
-                continue
-            if cname in token or token in cname:
-                matched_ids.append(cid)
-                matched_names.append(competency_map[cid])
-                used_ids.add(cid)
-                found = True
-                break
+        # 2. Обмежене часткове входження тільки для довших multi-word token-ів.
+        # Це зменшує шум типу "model" -> десятки нерелевантних skills.
+        if " " in token and len(token) >= 6:
+            for cid, cname in normalized_map.items():
+                if cid in used_ids:
+                    continue
+                if len(cname) < 4 or " " not in cname:
+                    continue
+                if cname in token or token in cname:
+                    matched_ids.append(cid)
+                    matched_names.append(competency_map[cid])
+                    used_ids.add(cid)
+                    found = True
+                    break
 
         if not found and len(token) > 3:
             unrecognized.append(token)

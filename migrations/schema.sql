@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS job.profession_groups (
     id              SERIAL PRIMARY KEY,
     esco_uri        VARCHAR NOT NULL UNIQUE,
     code            VARCHAR,
-    name            VARCHAR NOT NULL UNIQUE,
+    name            VARCHAR NOT NULL,
     description     TEXT,
     parent_group_id INTEGER REFERENCES job.profession_groups(id) ON DELETE SET NULL
 );
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS job.professions (
     id                   SERIAL PRIMARY KEY,
     esco_uri             VARCHAR NOT NULL UNIQUE,
     code                 VARCHAR,
-    name                 VARCHAR NOT NULL UNIQUE,
+    name                 VARCHAR NOT NULL,
     description          TEXT,
     profession_group_id  INTEGER NOT NULL REFERENCES job.profession_groups(id) ON DELETE RESTRICT,
     parent_profession_id INTEGER REFERENCES job.professions(id) ON DELETE SET NULL
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS job.profession_labels (
     id            SERIAL PRIMARY KEY,
     profession_id INTEGER NOT NULL REFERENCES job.professions(id) ON DELETE CASCADE,
     label         VARCHAR NOT NULL,
-    label_type    VARCHAR NOT NULL,
+    label_type    VARCHAR NOT NULL CHECK (label_type IN ('preferred', 'alternative', 'hidden')),
     lang          VARCHAR NOT NULL,
     UNIQUE (profession_id, label, label_type, lang)
 );
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS job.competency_groups (
     id              SERIAL PRIMARY KEY,
     esco_uri        VARCHAR NOT NULL UNIQUE,
     code            VARCHAR,
-    name            VARCHAR NOT NULL UNIQUE,
+    name            VARCHAR NOT NULL,
     description     TEXT,
     parent_group_id INTEGER REFERENCES job.competency_groups(id) ON DELETE SET NULL
 );
@@ -74,16 +74,18 @@ CREATE TABLE IF NOT EXISTS job.competency_groups (
 CREATE TABLE IF NOT EXISTS job.competencies (
     id              SERIAL PRIMARY KEY,
     esco_uri        VARCHAR UNIQUE,
-    name            VARCHAR NOT NULL UNIQUE,
+    name            VARCHAR NOT NULL,
     description     TEXT,
-    competency_type VARCHAR
+    competency_type VARCHAR CHECK (
+        competency_type IS NULL OR competency_type IN ('skill/competence', 'knowledge')
+    )
 );
 
 CREATE TABLE IF NOT EXISTS job.competency_labels (
     id            SERIAL PRIMARY KEY,
     competency_id INTEGER NOT NULL REFERENCES job.competencies(id) ON DELETE CASCADE,
     label         VARCHAR NOT NULL,
-    label_type    VARCHAR NOT NULL,
+    label_type    VARCHAR NOT NULL CHECK (label_type IN ('preferred', 'alternative', 'hidden')),
     lang          VARCHAR NOT NULL,
     UNIQUE (competency_id, label, label_type, lang)
 );
@@ -97,16 +99,21 @@ CREATE TABLE IF NOT EXISTS job.competency_group_members (
 CREATE TABLE IF NOT EXISTS job.profession_competencies (
     profession_id INTEGER NOT NULL REFERENCES job.professions(id) ON DELETE CASCADE,
     competency_id INTEGER NOT NULL REFERENCES job.competencies(id) ON DELETE CASCADE,
-    relation_type VARCHAR NOT NULL,
+    link_type     VARCHAR NOT NULL CHECK (
+        link_type IN ('esco_essential', 'esco_optional', 'job_derived', 'manual')
+    ),
     weight        NUMERIC,
-    source        VARCHAR,
-    PRIMARY KEY (profession_id, competency_id, relation_type)
+    PRIMARY KEY (profession_id, competency_id, link_type),
+    CHECK (
+        (link_type IN ('esco_essential', 'esco_optional') AND weight IS NULL) OR
+        (link_type IN ('job_derived', 'manual') AND weight IS NOT NULL)
+    )
 );
 
 CREATE TABLE IF NOT EXISTS job.competency_relations (
     source_competency_id INTEGER NOT NULL REFERENCES job.competencies(id) ON DELETE CASCADE,
     target_competency_id INTEGER NOT NULL REFERENCES job.competencies(id) ON DELETE CASCADE,
-    relation_type        VARCHAR NOT NULL,
+    relation_type        VARCHAR NOT NULL CHECK (relation_type IN ('essential', 'optional', 'related')),
     PRIMARY KEY (source_competency_id, target_competency_id, relation_type)
 );
 

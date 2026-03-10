@@ -195,13 +195,13 @@ async def add_profession_competency(
 
 
 @professions_router.patch(
-    "/professions/{profession_id}/competencies/{competency_id}/{relation_type}",
+    "/professions/{profession_id}/competencies/{competency_id}/{link_type}",
     response_model=ProfessionCompetencyOut,
 )
 async def update_profession_competency(
     profession_id: int,
     competency_id: int,
-    relation_type: str,
+    link_type: str,
     data: ProfessionCompetencyUpdate,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
@@ -210,21 +210,21 @@ async def update_profession_competency(
         db,
         profession_id,
         competency_id,
-        relation_type,
+        link_type,
         data,
     )
 
 
-@professions_router.delete("/professions/{profession_id}/competencies/{competency_id}/{relation_type}", status_code=204)
+@professions_router.delete("/professions/{profession_id}/competencies/{competency_id}/{link_type}", status_code=204)
 async def delete_profession_competency(
     profession_id: int,
     competency_id: int,
-    relation_type: str,
+    link_type: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ):
     await knowledge_base_service.delete_profession_competency(
-        db, profession_id, competency_id, relation_type
+        db, profession_id, competency_id, link_type
     )
 
 

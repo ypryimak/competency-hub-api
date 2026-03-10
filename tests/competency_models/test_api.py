@@ -44,17 +44,17 @@ def create_catalog(admin_token: str, marker: str) -> tuple[dict, dict, list[dict
     post(
         admin_token,
         f"/professions/{profession['id']}/competencies",
-        {"competency_id": competencies[0]["id"], "relation_type": "essential", "weight": 0.9, "source": "esco"},
+        {"competency_id": competencies[0]["id"], "link_type": "manual", "weight": 0.9},
     )
     post(
         admin_token,
         f"/professions/{profession['id']}/competencies",
-        {"competency_id": competencies[1]["id"], "relation_type": "essential", "weight": 0.8, "source": "esco"},
+        {"competency_id": competencies[1]["id"], "link_type": "manual", "weight": 0.8},
     )
     post(
         admin_token,
         f"/professions/{profession['id']}/competencies",
-        {"competency_id": competencies[2]["id"], "relation_type": "optional", "weight": 0.6, "source": "esco"},
+        {"competency_id": competencies[2]["id"], "link_type": "manual", "weight": 0.6},
     )
     return group, fallback_profession, [profession, *competencies]
 

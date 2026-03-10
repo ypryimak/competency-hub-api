@@ -48,6 +48,13 @@ from app.services.opa_service import (
     run_opa,
 )
 
+LINK_TYPE_SCORES = {
+    "esco_essential": 2.0,
+    "manual": 1.5,
+    "esco_optional": 1.0,
+    "job_derived": 0.0,
+}
+
 
 class CompetencyModelService:
     async def list_models(self, db: AsyncSession, user_id: int) -> Sequence[CompetencyModel]:
@@ -636,10 +643,9 @@ class CompetencyModelService:
         ).all()
 
         if direct_rows:
-            relation_boost = {"essential": 1.0, "optional": 0.6, "derived": 0.0}
             recommendations: dict[int, AlternativeRecommendation] = {}
             for link, competency in direct_rows:
-                score = relation_boost.get(link.relation_type, 0.0) + float(link.weight or 0)
+                score = LINK_TYPE_SCORES.get(link.link_type, 0.0) + float(link.weight or 0)
                 current = recommendations.get(link.competency_id)
                 if current is None or score > current.score:
                     recommendations[link.competency_id] = AlternativeRecommendation(
@@ -668,25 +674,32 @@ class CompetencyModelService:
             await db.execute(
                 select(
                     ProfessionCompetency.competency_id,
-                    func.avg(ProfessionCompetency.weight).label("avg_weight"),
+                    ProfessionCompetency.link_type,
+                    ProfessionCompetency.weight,
                     Competency.name,
                 )
                 .join(Competency, Competency.id == ProfessionCompetency.competency_id)
                 .where(ProfessionCompetency.profession_id.in_(similar_ids))
-                .group_by(ProfessionCompetency.competency_id, Competency.name)
-                .order_by(func.avg(ProfessionCompetency.weight).desc())
-                .limit(10)
             )
         ).all()
-        return [
-            AlternativeRecommendation(
-                competency_id=row.competency_id,
-                competency_name=row.name,
-                score=float(row.avg_weight or 0),
-                already_added=row.competency_id in existing_ids,
-            )
-            for row in rows
-        ]
+
+        recommendations: dict[int, AlternativeRecommendation] = {}
+        for row in rows:
+            score = LINK_TYPE_SCORES.get(row.link_type, 0.0) + float(row.weight or 0)
+            current = recommendations.get(row.competency_id)
+            if current is None or score > current.score:
+                recommendations[row.competency_id] = AlternativeRecommendation(
+                    competency_id=row.competency_id,
+                    competency_name=row.name,
+                    score=round(score, 4),
+                    already_added=row.competency_id in existing_ids,
+                )
+
+        return sorted(
+            recommendations.values(),
+            key=lambda item: item.score,
+            reverse=True,
+        )[:10]
 
     def _filter_alternatives(
         self,
@@ -871,10 +884,15 @@ class CompetencyModelService:
             await db.execute(
                 select(ProfessionCompetency)
                 .where(ProfessionCompetency.profession_id == model.profession_id)
-                .order_by(ProfessionCompetency.weight.desc().nullslast())
-                .limit(10)
             )
         ).scalars().all()
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                -(LINK_TYPE_SCORES.get(row.link_type, 0.0) + float(row.weight or 0)),
+                row.link_type,
+            ),
+        )[:10]
         for row in rows:
             db.add(Alternative(model_id=model.id, competency_id=row.competency_id))
         await db.flush()

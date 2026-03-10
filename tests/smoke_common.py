@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import string
 import sys
@@ -7,7 +8,7 @@ from typing import Any
 import requests
 
 
-BASE_URL = "http://127.0.0.1:8000/api/v1"
+BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 ADMIN_EMAIL = "test_admin@competencyhub.dev"
 ADMIN_PASSWORD = "testpass123"
 

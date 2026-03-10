@@ -1,6 +1,18 @@
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+CompetencyType = Literal["skill/competence", "knowledge"]
+LabelType = Literal["preferred", "alternative", "hidden"]
+ProfessionCompetencyLinkType = Literal[
+    "esco_essential",
+    "esco_optional",
+    "job_derived",
+    "manual",
+]
+ManualProfessionCompetencyLinkType = Literal["manual"]
+CompetencyRelationType = Literal["essential", "optional", "related"]
 
 
 class ProfessionGroupCreate(BaseModel):
@@ -62,13 +74,36 @@ class ProfessionOut(BaseModel):
 
 class ProfessionLabelCreate(BaseModel):
     label: str
-    label_type: str
+    label_type: LabelType = Field(
+        description=(
+            "Valid values: preferred, alternative, hidden. "
+            "preferred = primary display label, alternative = synonym, "
+            "hidden = search-only alias."
+        )
+    )
     lang: str = "en"
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "label": "Backend Developer",
+                "label_type": "alternative",
+                "lang": "en",
+            }
+        }
+    }
 
 
 class ProfessionLabelUpdate(BaseModel):
     label: Optional[str] = None
-    label_type: Optional[str] = None
+    label_type: Optional[LabelType] = Field(
+        default=None,
+        description=(
+            "Valid values: preferred, alternative, hidden. "
+            "preferred = primary display label, alternative = synonym, "
+            "hidden = search-only alias."
+        ),
+    )
     lang: Optional[str] = None
 
 
@@ -76,7 +111,12 @@ class ProfessionLabelOut(BaseModel):
     id: int
     profession_id: int
     label: str
-    label_type: str
+    label_type: LabelType = Field(
+        description=(
+            "Label classification. Valid values: preferred, alternative, hidden. "
+            "preferred = primary display label, alternative = synonym, hidden = search-only alias."
+        )
+    )
     lang: str
 
     model_config = {"from_attributes": True}
@@ -113,14 +153,26 @@ class CompetencyCreate(BaseModel):
     esco_uri: Optional[str] = None
     name: str
     description: Optional[str] = None
-    competency_type: Optional[str] = None
+    competency_type: Optional[CompetencyType] = Field(
+        default=None,
+        description=(
+            "Valid values: skill/competence, knowledge. "
+            "Use skill/competence for practical abilities and knowledge for conceptual knowledge areas."
+        ),
+    )
 
 
 class CompetencyUpdate(BaseModel):
     esco_uri: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
-    competency_type: Optional[str] = None
+    competency_type: Optional[CompetencyType] = Field(
+        default=None,
+        description=(
+            "Valid values: skill/competence, knowledge. "
+            "Use skill/competence for practical abilities and knowledge for conceptual knowledge areas."
+        ),
+    )
 
 
 class CompetencyOut(BaseModel):
@@ -128,20 +180,49 @@ class CompetencyOut(BaseModel):
     esco_uri: Optional[str] = None
     name: str
     description: Optional[str] = None
-    competency_type: Optional[str] = None
+    competency_type: Optional[CompetencyType] = Field(
+        default=None,
+        description=(
+            "Valid values: skill/competence, knowledge. "
+            "Use skill/competence for practical abilities and knowledge for conceptual knowledge areas."
+        ),
+    )
 
     model_config = {"from_attributes": True}
 
 
 class CompetencyLabelCreate(BaseModel):
     label: str
-    label_type: str
+    label_type: LabelType = Field(
+        description=(
+            "Valid values: preferred, alternative, hidden. "
+            "preferred = primary display label, alternative = synonym, "
+            "hidden = search-only alias."
+        )
+    )
     lang: str = "en"
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "label": "Python programming",
+                "label_type": "alternative",
+                "lang": "en",
+            }
+        }
+    }
 
 
 class CompetencyLabelUpdate(BaseModel):
     label: Optional[str] = None
-    label_type: Optional[str] = None
+    label_type: Optional[LabelType] = Field(
+        default=None,
+        description=(
+            "Valid values: preferred, alternative, hidden. "
+            "preferred = primary display label, alternative = synonym, "
+            "hidden = search-only alias."
+        ),
+    )
     lang: Optional[str] = None
 
 
@@ -149,7 +230,12 @@ class CompetencyLabelOut(BaseModel):
     id: int
     competency_id: int
     label: str
-    label_type: str
+    label_type: LabelType = Field(
+        description=(
+            "Label classification. Valid values: preferred, alternative, hidden. "
+            "preferred = primary display label, alternative = synonym, hidden = search-only alias."
+        )
+    )
     lang: str
 
     model_config = {"from_attributes": True}
@@ -168,22 +254,49 @@ class CompetencyGroupMemberOut(BaseModel):
 
 class ProfessionCompetencyCreate(BaseModel):
     competency_id: int
-    relation_type: str
-    weight: Optional[float] = None
-    source: Optional[str] = None
+    link_type: ManualProfessionCompetencyLinkType = Field(
+        description=(
+            "Valid value: manual. "
+            "ESCO and job-derived links are generated by seed and parsing workflows, not by direct API creation."
+        )
+    )
+    weight: Optional[float] = Field(
+        default=None,
+        description=(
+            "Manual weight assigned through the API. "
+            "Required for manual links created through this endpoint."
+        ),
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "competency_id": 123,
+                "link_type": "manual",
+                "weight": 0.85,
+            }
+        }
+    }
 
 
 class ProfessionCompetencyUpdate(BaseModel):
-    weight: Optional[float] = None
-    source: Optional[str] = None
+    weight: Optional[float] = Field(
+        default=None,
+        description="Only manual links can be updated through the API. Provide the manual weight.",
+    )
 
 
 class ProfessionCompetencyOut(BaseModel):
     competency_id: int
     competency_name: str
-    relation_type: str
+    link_type: ProfessionCompetencyLinkType = Field(
+        description=(
+            "Valid values: esco_essential, esco_optional, job_derived, manual. "
+            "esco_essential and esco_optional come from the ESCO dataset, "
+            "job_derived is recalculated from parsed vacancies, and manual is added by users through the API."
+        )
+    )
     weight: Optional[float] = None
-    source: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -191,13 +304,33 @@ class ProfessionCompetencyOut(BaseModel):
 class CompetencyRelationCreate(BaseModel):
     source_competency_id: int
     target_competency_id: int
-    relation_type: str
+    relation_type: CompetencyRelationType = Field(
+        description=(
+            "Valid values: essential, optional, related. "
+            "essential and optional come from ESCO-like semantic links; related is a generic custom relation."
+        )
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_competency_id": 101,
+                "target_competency_id": 202,
+                "relation_type": "related",
+            }
+        }
+    }
 
 
 class CompetencyRelationOut(BaseModel):
     source_competency_id: int
     target_competency_id: int
-    relation_type: str
+    relation_type: CompetencyRelationType = Field(
+        description=(
+            "Valid values: essential, optional, related. "
+            "essential and optional come from ESCO-like semantic links; related is a generic custom relation."
+        )
+    )
     source_competency_name: Optional[str] = None
     target_competency_name: Optional[str] = None
 

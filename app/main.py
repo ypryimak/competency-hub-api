@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.api.v1.router import api_router
+from app.api.v1.openapi_metadata import apply_openapi_metadata
 
 APP_DESCRIPTION = """
 Backend for competency models, expert evaluation, and candidate selection.
@@ -53,6 +54,7 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+apply_openapi_metadata(app)
 
 
 @app.get("/health")
