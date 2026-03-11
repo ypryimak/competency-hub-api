@@ -17,6 +17,7 @@ from app.schemas.competency_model import (
     ModelExpertCreate, ModelExpertUpdate, ModelExpertOut,
     ExpertInviteCreate, ExpertInviteUpdate, ExpertInviteOut,
     CriterionCreate, CriterionUpdate, CriterionOut,
+    CustomCompetencyCreate, CustomCompetencyOut, CustomCompetencyUpdate,
     AlternativeCreate, AlternativeOut, AlternativeRecommendation,
     ExpertEvaluationSubmit, ExpertEvaluationStatus,
     ModelSubmitRequest, OPAResult,
@@ -228,6 +229,67 @@ async def remove_criterion(
 ):
     await competency_model_service.remove_criterion(
         db, model_id, criterion_id, current_user.id
+    )
+
+
+@router.get(
+    "/competency-models/{model_id}/custom-competencies",
+    response_model=list[CustomCompetencyOut],
+    tags=["Competency Models"],
+)
+async def list_custom_competencies(
+    model_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await competency_model_service.list_custom_competencies(db, model_id, current_user.id)
+
+
+@router.post(
+    "/competency-models/{model_id}/custom-competencies",
+    response_model=CustomCompetencyOut,
+    status_code=201,
+    tags=["Competency Models"],
+)
+async def create_custom_competency(
+    model_id: int,
+    data: CustomCompetencyCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await competency_model_service.create_custom_competency(db, model_id, current_user.id, data)
+
+
+@router.patch(
+    "/competency-models/{model_id}/custom-competencies/{custom_competency_id}",
+    response_model=CustomCompetencyOut,
+    tags=["Competency Models"],
+)
+async def update_custom_competency(
+    model_id: int,
+    custom_competency_id: int,
+    data: CustomCompetencyUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await competency_model_service.update_custom_competency(
+        db, model_id, custom_competency_id, current_user.id, data
+    )
+
+
+@router.delete(
+    "/competency-models/{model_id}/custom-competencies/{custom_competency_id}",
+    status_code=204,
+    tags=["Competency Models"],
+)
+async def delete_custom_competency(
+    model_id: int,
+    custom_competency_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await competency_model_service.delete_custom_competency(
+        db, model_id, custom_competency_id, current_user.id
     )
 
 

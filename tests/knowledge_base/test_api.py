@@ -37,6 +37,14 @@ def main() -> None:
             "profession_group_id": profession_group["id"],
         },
     )
+    similar_profession = post(
+        token,
+        "/professions",
+        {
+            "name": f"[TEST {marker}] DevOps Engineer",
+            "profession_group_id": profession_group["id"],
+        },
+    )
     get(token, "/professions")
     get(token, f"/professions/{profession['id']}")
     profession = patch(
@@ -165,7 +173,28 @@ def main() -> None:
         f"/professions/{profession['id']}/competencies/{competencies[0]['id']}/manual",
         {"weight": 1.0},
     )
+    post(
+        token,
+        f"/professions/{similar_profession['id']}/competencies",
+        {
+            "competency_id": competencies[0]["id"],
+            "link_type": "manual",
+            "weight": 0.7,
+        },
+    )
+    post(
+        token,
+        f"/professions/{similar_profession['id']}/competencies",
+        {
+            "competency_id": competencies[1]["id"],
+            "link_type": "manual",
+            "weight": 0.6,
+        },
+    )
     get(token, f"/professions/{profession['id']}/competencies")
+    similar = get(token, f"/professions/{profession['id']}/similar")
+    assert similar, "Expected similar professions for the seeded profession"
+    assert any(item["id"] == similar_profession["id"] for item in similar), "Expected related profession in similar list"
 
     jobs = [
         post(
@@ -232,10 +261,13 @@ def main() -> None:
         token,
         f"/competency-relations/{relation['source_competency_id']}/{relation['target_competency_id']}/{relation['relation_type']}",
     )
+    delete(token, f"/professions/{similar_profession['id']}/competencies/{competencies[0]['id']}/manual")
+    delete(token, f"/professions/{similar_profession['id']}/competencies/{competencies[1]['id']}/manual")
     delete(token, f"/professions/{profession['id']}/competencies/{competencies[0]['id']}/manual")
     delete(token, f"/competencies/{competencies[0]['id']}/groups/{competency_group['id']}")
     delete(token, f"/competencies/{competencies[0]['id']}/labels/{competency_label['id']}")
     delete(token, f"/professions/{profession['id']}/labels/{profession_label['id']}")
+    delete(token, f"/professions/{similar_profession['id']}")
     for competency in competencies:
         delete(token, f"/competencies/{competency['id']}")
     delete(token, f"/competency-groups/{competency_group['id']}")

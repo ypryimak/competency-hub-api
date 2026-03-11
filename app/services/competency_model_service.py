@@ -16,6 +16,7 @@ from app.models.models import (
     CompetencyModel,
     Criterion,
     CriterionRank,
+    CustomCompetency,
     ExpertInvite,
     ModelExpert,
     Profession,
@@ -31,6 +32,9 @@ from app.schemas.competency_model import (
     CompetencyModelUpdate,
     CriterionCreate,
     CriterionUpdate,
+    CustomCompetencyCreate,
+    CustomCompetencyOut,
+    CustomCompetencyUpdate,
     ExpertInviteCreate,
     ExpertInviteOut,
     ExpertInviteUpdate,
@@ -74,7 +78,9 @@ class CompetencyModelService:
                 selectinload(CompetencyModel.experts),
                 selectinload(CompetencyModel.expert_invites),
                 selectinload(CompetencyModel.criteria),
+                selectinload(CompetencyModel.custom_competencies),
                 selectinload(CompetencyModel.alternatives).selectinload(Alternative.competency),
+                selectinload(CompetencyModel.alternatives).selectinload(Alternative.custom_competency),
             )
         )
         model = result.scalar_one_or_none()
@@ -108,17 +114,8 @@ class CompetencyModelService:
                 for invite in model.expert_invites
             ],
             criteria=model.criteria,
-            alternatives=[
-                AlternativeOut(
-                    id=alt.id,
-                    model_id=alt.model_id,
-                    competency_id=alt.competency_id,
-                    competency_name=alt.competency.name if alt.competency else None,
-                    weight=alt.weight,
-                    final_weight=alt.final_weight,
-                )
-                for alt in model.alternatives
-            ],
+            custom_competencies=[CustomCompetencyOut.model_validate(item) for item in model.custom_competencies],
+            alternatives=[self._serialize_alternative(alt) for alt in model.alternatives],
         )
 
     async def create_model(
@@ -300,9 +297,100 @@ class CompetencyModelService:
         criterion = await self._get_criterion(db, criterion_id, model_id)
         await db.delete(criterion)
 
+    async def list_custom_competencies(
+        self,
+        db: AsyncSession,
+        model_id: int,
+        user_id: int,
+    ) -> list[CustomCompetency]:
+        await self._get_model_orm(db, model_id, user_id)
+        result = await db.execute(
+            select(CustomCompetency)
+            .where(CustomCompetency.model_id == model_id)
+            .order_by(CustomCompetency.created_at, CustomCompetency.id)
+        )
+        return result.scalars().all()
+
+    async def create_custom_competency(
+        self,
+        db: AsyncSession,
+        model_id: int,
+        user_id: int,
+        data: CustomCompetencyCreate,
+    ) -> CustomCompetency:
+        model = await self._get_model_orm(db, model_id, user_id)
+        self._require_status(model, ModelStatus.DRAFT)
+        normalized_name = data.name.strip()
+        await self._ensure_missing(
+            db,
+            select(CustomCompetency).where(
+                CustomCompetency.model_id == model_id,
+                func.lower(CustomCompetency.name) == normalized_name.lower(),
+            ),
+            "Custom competency with this name already exists in the model",
+        )
+        custom_competency = CustomCompetency(
+            model_id=model_id,
+            name=normalized_name,
+            description=data.description,
+        )
+        db.add(custom_competency)
+        await db.flush()
+        db.add(
+            Alternative(
+                model_id=model_id,
+                custom_competency_id=custom_competency.id,
+            )
+        )
+        await db.flush()
+        await db.refresh(custom_competency)
+        return custom_competency
+
+    async def update_custom_competency(
+        self,
+        db: AsyncSession,
+        model_id: int,
+        custom_competency_id: int,
+        user_id: int,
+        data: CustomCompetencyUpdate,
+    ) -> CustomCompetency:
+        model = await self._get_model_orm(db, model_id, user_id)
+        self._require_status(model, ModelStatus.DRAFT)
+        custom_competency = await self._get_custom_competency(db, custom_competency_id, model_id)
+        if data.name is not None:
+            normalized_name = data.name.strip()
+            if normalized_name.lower() != custom_competency.name.lower():
+                await self._ensure_missing(
+                    db,
+                    select(CustomCompetency).where(
+                        CustomCompetency.model_id == model_id,
+                        func.lower(CustomCompetency.name) == normalized_name.lower(),
+                        CustomCompetency.id != custom_competency_id,
+                    ),
+                    "Custom competency with this name already exists in the model",
+                )
+            custom_competency.name = normalized_name
+        if data.description is not None:
+            custom_competency.description = data.description
+        await db.flush()
+        await db.refresh(custom_competency)
+        return custom_competency
+
+    async def delete_custom_competency(
+        self,
+        db: AsyncSession,
+        model_id: int,
+        custom_competency_id: int,
+        user_id: int,
+    ) -> None:
+        model = await self._get_model_orm(db, model_id, user_id)
+        self._require_status(model, ModelStatus.DRAFT)
+        custom_competency = await self._get_custom_competency(db, custom_competency_id, model_id)
+        await db.delete(custom_competency)
+
     async def add_alternative(
         self, db: AsyncSession, model_id: int, user_id: int, data: AlternativeCreate
-    ) -> Alternative:
+    ) -> AlternativeOut:
         model = await self._get_model_orm(db, model_id, user_id)
         self._require_status(model, ModelStatus.DRAFT)
         existing = await db.execute(
@@ -316,11 +404,16 @@ class CompetencyModelService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Competency is already an alternative in this model",
             )
+        await self._ensure_competency_exists(db, data.competency_id)
         alt = Alternative(model_id=model_id, competency_id=data.competency_id)
         db.add(alt)
         await db.flush()
-        await db.refresh(alt)
-        return alt
+        result = await db.execute(
+            select(Alternative)
+            .where(Alternative.id == alt.id)
+            .options(selectinload(Alternative.competency), selectinload(Alternative.custom_competency))
+        )
+        return self._serialize_alternative(result.scalar_one())
 
     async def remove_alternative(
         self, db: AsyncSession, model_id: int, alternative_id: int, user_id: int
@@ -591,7 +684,14 @@ class CompetencyModelService:
         ).scalars().all():
             criterion.weight = opa_result.criterion_weights.get(criterion.id)
         alternatives = (
-            await db.execute(select(Alternative).where(Alternative.model_id == model_id))
+            await db.execute(
+                select(Alternative)
+                .where(Alternative.model_id == model_id)
+                .options(
+                    selectinload(Alternative.competency),
+                    selectinload(Alternative.custom_competency),
+                )
+            )
         ).scalars().all()
         for alt in alternatives:
             alt.weight = opa_result.alternative_weights.get(alt.id)
@@ -607,28 +707,11 @@ class CompetencyModelService:
         model.status = ModelStatus.COMPLETED
         await db.flush()
 
-        competency_ids = [alt.competency_id for alt in filtered]
-        competency_map = {
-            item.id: item
-            for item in (
-                await db.execute(select(Competency).where(Competency.id.in_(competency_ids)))
-            ).scalars().all()
-        }
         return OPAResult(
             expert_weights=opa_result.expert_weights,
             criterion_weights=opa_result.criterion_weights,
             alternative_weights=opa_result.alternative_weights,
-            filtered_alternatives=[
-                AlternativeOut(
-                    id=alt.id,
-                    model_id=alt.model_id,
-                    competency_id=alt.competency_id,
-                    competency_name=competency_map.get(alt.competency_id).name if alt.competency_id in competency_map else None,
-                    weight=alt.weight,
-                    final_weight=alt.final_weight,
-                )
-                for alt in filtered
-            ],
+            filtered_alternatives=[self._serialize_alternative(alt) for alt in filtered],
             status="success",
         )
 
@@ -739,7 +822,9 @@ class CompetencyModelService:
                 selectinload(CompetencyModel.experts),
                 selectinload(CompetencyModel.expert_invites),
                 selectinload(CompetencyModel.criteria),
-                selectinload(CompetencyModel.alternatives),
+                selectinload(CompetencyModel.custom_competencies),
+                selectinload(CompetencyModel.alternatives).selectinload(Alternative.competency),
+                selectinload(CompetencyModel.alternatives).selectinload(Alternative.custom_competency),
             )
         )
         model = result.scalar_one_or_none()
@@ -810,6 +895,23 @@ class CompetencyModelService:
         if not alt:
             raise HTTPException(status_code=404, detail="Alternative not found")
         return alt
+
+    async def _get_custom_competency(
+        self,
+        db: AsyncSession,
+        custom_competency_id: int,
+        model_id: int,
+    ) -> CustomCompetency:
+        result = await db.execute(
+            select(CustomCompetency).where(
+                CustomCompetency.id == custom_competency_id,
+                CustomCompetency.model_id == model_id,
+            )
+        )
+        custom_competency = result.scalar_one_or_none()
+        if not custom_competency:
+            raise HTTPException(status_code=404, detail="Custom competency not found")
+        return custom_competency
 
     async def _check_expert_rank_unique(
         self,
@@ -882,6 +984,11 @@ class CompetencyModelService:
             raise HTTPException(status_code=404, detail="User not found")
         return user
 
+    async def _ensure_competency_exists(self, db: AsyncSession, competency_id: int) -> None:
+        result = await db.execute(select(Competency.id).where(Competency.id == competency_id))
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Competency not found")
+
     async def _ensure_user_not_already_expert(self, db: AsyncSession, model_id: int, user_id: int) -> None:
         result = await db.execute(
             select(ModelExpert).where(ModelExpert.model_id == model_id, ModelExpert.user_id == user_id)
@@ -908,6 +1015,34 @@ class CompetencyModelService:
         for row in rows:
             db.add(Alternative(model_id=model.id, competency_id=row.competency_id))
         await db.flush()
+
+    def _serialize_alternative(self, alternative: Alternative) -> AlternativeOut:
+        if alternative.custom_competency is not None:
+            return AlternativeOut(
+                id=alternative.id,
+                model_id=alternative.model_id,
+                competency_id=None,
+                custom_competency_id=alternative.custom_competency_id,
+                competency_name=alternative.custom_competency.name,
+                source_type="custom",
+                weight=alternative.weight,
+                final_weight=alternative.final_weight,
+            )
+        return AlternativeOut(
+            id=alternative.id,
+            model_id=alternative.model_id,
+            competency_id=alternative.competency_id,
+            custom_competency_id=None,
+            competency_name=alternative.competency.name if alternative.competency else None,
+            source_type="system",
+            weight=alternative.weight,
+            final_weight=alternative.final_weight,
+        )
+
+    async def _ensure_missing(self, db: AsyncSession, query, detail: str) -> None:
+        result = await db.execute(query)
+        if result.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=409, detail=detail)
 
     async def _ensure_profession_exists(self, db: AsyncSession, profession_id: int) -> None:
         result = await db.execute(select(Profession.id).where(Profession.id == profession_id))

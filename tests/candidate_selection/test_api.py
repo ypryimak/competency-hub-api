@@ -83,14 +83,21 @@ def create_completed_model(
         f"/competency-models/{model_id}/criteria",
         {"name": "Delivery fit"},
     )
+    custom = post(
+        hr_token,
+        f"/competency-models/{model_id}/custom-competencies",
+        {"name": f"[TEST {marker}] Product domain expertise"},
+    )
+    _ = custom
     post(
         hr_token,
         f"/competency-models/{model_id}/submit",
-        {"max_competency_rank": 2, "evaluation_deadline": "2026-12-31T23:59:59"},
+        {"max_competency_rank": 3, "evaluation_deadline": "2026-12-31T23:59:59"},
         expected=200,
     )
     detail = get(hr_token, f"/competency-models/{model_id}")
     alternative_ids = [item["id"] for item in detail["alternatives"]]
+    custom_alternative_ids = [item["id"] for item in detail["alternatives"] if item["source_type"] == "custom"]
     ok(
         "Submit expert evaluation for model",
         requests.post(
@@ -105,7 +112,7 @@ def create_completed_model(
                     {
                         "alternative_id": alternative_id,
                         "criterion_id": criterion_id,
-                        "rank": index + 1,
+                        "rank": 1 if alternative_id in custom_alternative_ids else index + 2,
                     }
                     for criterion_id in [criterion_1["id"], criterion_2["id"]]
                     for index, alternative_id in enumerate(alternative_ids)
@@ -116,26 +123,23 @@ def create_completed_model(
     )
     post(hr_token, f"/competency-models/{model_id}/calculate", expected=200)
     completed_detail = get(hr_token, f"/competency-models/{model_id}")
-    final_competency_ids = [
-        item["competency_id"]
-        for item in completed_detail["alternatives"]
-        if item["final_weight"] is not None
-    ]
-    assert len(final_competency_ids) == 2, "Expected two final competencies for selection model"
-    return model, final_competency_ids
+    final_alternatives = [item for item in completed_detail["alternatives"] if item["final_weight"] is not None]
+    assert len(final_alternatives) == 3, "Expected three final criteria for selection model"
+    assert any(item["source_type"] == "custom" for item in final_alternatives), "Expected custom criterion in final model"
+    return model, final_alternatives
 
 
-def score_payload(candidate_ids: list[int], competency_ids: list[int], reverse: bool = False) -> dict:
+def score_payload(candidate_ids: list[int], criterion_ids: list[int], reverse: bool = False) -> dict:
     scores = []
     for cand_index, candidate_id in enumerate(candidate_ids):
-        for comp_index, competency_id in enumerate(competency_ids):
-            value = 5 - ((cand_index + comp_index) % 3)
+        for crit_index, criterion_id in enumerate(criterion_ids):
+            value = 5 - ((cand_index + crit_index) % 3)
             if reverse:
-                value = 2 + ((cand_index + comp_index) % 3)
+                value = 2 + ((cand_index + crit_index) % 3)
             scores.append(
                 {
                     "candidate_id": candidate_id,
-                    "competency_id": competency_id,
+                    "selection_criterion_id": criterion_id,
                     "score": value,
                 }
             )
@@ -156,7 +160,7 @@ def main() -> None:
     invited_email = f"selection_invited_{marker}@example.com"
 
     group, profession, competencies = create_catalog(admin_token, marker)
-    model, final_competency_ids = create_completed_model(
+    model, final_alternatives = create_completed_model(
         hr_token,
         direct_expert_token,
         direct_expert_user,
@@ -315,9 +319,11 @@ def main() -> None:
     print("\n[5] Negative checks for scoring invariants")
     selection_detail = get(hr_token, f"/selections/{selection_id}")
     selected_candidate_ids = [item["candidate_id"] for item in selection_detail["candidates"]]
+    selection_criterion_ids = [item["id"] for item in selection_detail["criteria"]]
     assert set(selected_candidate_ids) == {candidate_1["id"], candidate_2["id"]}, "Unexpected selection candidates"
+    assert len(selection_criterion_ids) == len(final_alternatives), "Expected frozen selection criteria snapshot"
 
-    invalid_candidate_payload = score_payload(selected_candidate_ids, final_competency_ids)
+    invalid_candidate_payload = score_payload(selected_candidate_ids, selection_criterion_ids)
     invalid_candidate_payload["scores"][0]["candidate_id"] = candidate_3["id"]
     expect_status(
         "Reject foreign candidate in expert scoring",
@@ -329,14 +335,14 @@ def main() -> None:
         400,
     )
 
-    invalid_competency_payload = score_payload(selected_candidate_ids, final_competency_ids)
-    invalid_competency_payload["scores"][0]["competency_id"] = competencies[2]["id"]
+    invalid_criterion_payload = score_payload(selected_candidate_ids, selection_criterion_ids)
+    invalid_criterion_payload["scores"][0]["selection_criterion_id"] = 999999
     expect_status(
-        "Reject foreign competency in expert scoring",
+        "Reject foreign criterion in expert scoring",
         requests.post(
             f"{BASE_URL}/expert/selections/{selection_id}/score",
             headers=auth_headers(direct_expert_token),
-            json=invalid_competency_payload,
+            json=invalid_criterion_payload,
         ),
         400,
     )
@@ -347,7 +353,7 @@ def main() -> None:
         requests.post(
             f"{BASE_URL}/expert/selections/{selection_id}/score",
             headers=auth_headers(direct_expert_token),
-            json=score_payload(selected_candidate_ids, final_competency_ids),
+            json=score_payload(selected_candidate_ids, selection_criterion_ids),
         ),
         200,
     )
@@ -364,7 +370,7 @@ def main() -> None:
         requests.post(
             f"{BASE_URL}/expert/selections/{selection_id}/score",
             headers=auth_headers(invited_token),
-            json=score_payload(selected_candidate_ids, final_competency_ids, reverse=True),
+            json=score_payload(selected_candidate_ids, selection_criterion_ids, reverse=True),
         ),
         200,
     )

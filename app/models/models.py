@@ -444,6 +444,10 @@ class CompetencyModel(Base):
         back_populates="model",
         cascade="all, delete-orphan",
     )
+    custom_competencies: Mapped[List["CustomCompetency"]] = relationship(
+        back_populates="model",
+        cascade="all, delete-orphan",
+    )
     alternatives: Mapped[List["Alternative"]] = relationship(
         back_populates="model",
         cascade="all, delete-orphan",
@@ -513,6 +517,31 @@ class Criterion(Base):
     alternative_ranks: Mapped[List["AlternativeRank"]] = relationship(back_populates="criterion")
 
 
+class CustomCompetency(Base):
+    __tablename__ = "custom_competencies"
+    __table_args__ = (
+        UniqueConstraint("model_id", "name"),
+        {"schema": "competency_model"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model_id: Mapped[int] = mapped_column(
+        ForeignKey("competency_model.models.id"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    model: Mapped["CompetencyModel"] = relationship(back_populates="custom_competencies")
+    alternatives: Mapped[List["Alternative"]] = relationship(
+        back_populates="custom_competency",
+        cascade="all, delete-orphan",
+    )
+
+
 class CriterionRank(Base):
     __tablename__ = "criterion_ranks"
     __table_args__ = (
@@ -536,22 +565,33 @@ class CriterionRank(Base):
 
 class Alternative(Base):
     __tablename__ = "alternatives"
-    __table_args__ = {"schema": "competency_model"}
+    __table_args__ = (
+        UniqueConstraint("model_id", "competency_id"),
+        UniqueConstraint("model_id", "custom_competency_id"),
+        {"schema": "competency_model"},
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     model_id: Mapped[int] = mapped_column(
         ForeignKey("competency_model.models.id"),
         nullable=False,
     )
-    competency_id: Mapped[int] = mapped_column(
+    competency_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("job.competencies.id"),
-        nullable=False,
+        nullable=True,
+    )
+    custom_competency_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("competency_model.custom_competencies.id"),
+        nullable=True,
     )
     weight: Mapped[Optional[float]] = mapped_column(Numeric)
     final_weight: Mapped[Optional[float]] = mapped_column(Numeric)
 
     model: Mapped["CompetencyModel"] = relationship(back_populates="alternatives")
     competency: Mapped["Competency"] = relationship(back_populates="alternatives")
+    custom_competency: Mapped[Optional["CustomCompetency"]] = relationship(
+        back_populates="alternatives"
+    )
     alternative_ranks: Mapped[List["AlternativeRank"]] = relationship(
         back_populates="alternative"
     )
@@ -605,6 +645,10 @@ class Selection(Base):
         cascade="all, delete-orphan",
     )
     experts: Mapped[List["SelectionExpert"]] = relationship(
+        back_populates="selection",
+        cascade="all, delete-orphan",
+    )
+    criteria: Mapped[List["SelectionCriterion"]] = relationship(
         back_populates="selection",
         cascade="all, delete-orphan",
     )
@@ -705,6 +749,35 @@ class SelectionExpert(Base):
     scores: Mapped[List["CandidateScore"]] = relationship(back_populates="expert")
 
 
+class SelectionCriterion(Base):
+    __tablename__ = "selection_criteria"
+    __table_args__ = (
+        UniqueConstraint("selection_id", "alternative_id"),
+        {"schema": "candidate_evaluation"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    selection_id: Mapped[int] = mapped_column(
+        ForeignKey("candidate_evaluation.selections.id"),
+        nullable=False,
+    )
+    alternative_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("competency_model.alternatives.id")
+    )
+    competency_id: Mapped[Optional[int]] = mapped_column(ForeignKey("job.competencies.id"))
+    custom_competency_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("competency_model.custom_competencies.id")
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    weight: Mapped[Optional[float]] = mapped_column(Numeric)
+
+    selection: Mapped["Selection"] = relationship(back_populates="criteria")
+    alternative: Mapped[Optional["Alternative"]] = relationship()
+    competency: Mapped[Optional["Competency"]] = relationship()
+    custom_competency: Mapped[Optional["CustomCompetency"]] = relationship()
+    scores: Mapped[List["CandidateScore"]] = relationship(back_populates="selection_criterion")
+
+
 class SelectionExpertInvite(Base):
     __tablename__ = "expert_invites"
     __table_args__ = (
@@ -735,7 +808,7 @@ class SelectionExpertInvite(Base):
 class CandidateScore(Base):
     __tablename__ = "candidate_scores"
     __table_args__ = (
-        UniqueConstraint("candidate_id", "expert_id", "competency_id"),
+        UniqueConstraint("candidate_id", "expert_id", "selection_criterion_id"),
         {"schema": "candidate_evaluation"},
     )
 
@@ -747,12 +820,12 @@ class CandidateScore(Base):
         ForeignKey("candidate_evaluation.experts.id"),
         primary_key=True,
     )
-    competency_id: Mapped[int] = mapped_column(
-        ForeignKey("job.competencies.id"),
+    selection_criterion_id: Mapped[int] = mapped_column(
+        ForeignKey("candidate_evaluation.selection_criteria.id"),
         primary_key=True,
     )
     score: Mapped[int] = mapped_column(Integer, nullable=False)
 
     candidate: Mapped["Candidate"] = relationship()
     expert: Mapped["SelectionExpert"] = relationship(back_populates="scores")
-    competency: Mapped["Competency"] = relationship()
+    selection_criterion: Mapped["SelectionCriterion"] = relationship(back_populates="scores")

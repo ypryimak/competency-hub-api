@@ -48,6 +48,7 @@ from app.schemas.knowledge_base import (
     ProfessionLabelUpdate,
     ProfessionUpdate,
     RecalculateProfessionCompetenciesResponse,
+    SimilarProfessionOut,
 )
 from app.services.document_processing_service import document_processing_service
 
@@ -129,6 +130,110 @@ class KnowledgeBaseService:
         if not obj:
             raise HTTPException(status_code=404, detail="Profession not found")
         return obj
+
+    async def get_similar_professions(
+        self,
+        db: AsyncSession,
+        profession_id: int,
+        limit: int = 5,
+    ) -> list[SimilarProfessionOut]:
+        target = await self.get_profession(db, profession_id)
+        target_competency_ids = set(
+            (
+                await db.execute(
+                    select(ProfessionCompetency.competency_id).where(
+                        ProfessionCompetency.profession_id == profession_id
+                    )
+                )
+            ).scalars().all()
+        )
+        shared_profession_ids = set()
+        if target_competency_ids:
+            shared_profession_ids.update(
+                (
+                    await db.execute(
+                        select(ProfessionCompetency.profession_id)
+                        .where(
+                            ProfessionCompetency.competency_id.in_(target_competency_ids),
+                            ProfessionCompetency.profession_id != profession_id,
+                        )
+                        .distinct()
+                    )
+                ).scalars().all()
+            )
+
+        result = await db.execute(select(Profession))
+        profession_rows = result.scalars().all()
+
+        candidate_ids = {
+            profession.id
+            for profession in profession_rows
+            if profession.id != profession_id
+            and (
+                profession.id in shared_profession_ids
+                or profession.profession_group_id == target.profession_group_id
+                or (
+                    target.parent_profession_id is not None
+                    and profession.parent_profession_id == target.parent_profession_id
+                )
+                or profession.parent_profession_id == profession_id
+                or target.parent_profession_id == profession.id
+            )
+        }
+        if not candidate_ids:
+            return []
+
+        rows = (
+            await db.execute(
+                select(
+                    ProfessionCompetency.profession_id,
+                    ProfessionCompetency.competency_id,
+                ).where(ProfessionCompetency.profession_id.in_(candidate_ids))
+            )
+        ).all()
+        competency_sets: dict[int, set[int]] = {}
+        for row in rows:
+            competency_sets.setdefault(row.profession_id, set()).add(row.competency_id)
+
+        scored: list[SimilarProfessionOut] = []
+        for profession in profession_rows:
+            if profession.id not in candidate_ids:
+                continue
+            candidate_competencies = competency_sets.get(profession.id, set())
+            shared_count = len(target_competency_ids & candidate_competencies)
+            union_count = len(target_competency_ids | candidate_competencies)
+            overlap_score = (shared_count / union_count) if union_count else 0.0
+            same_group_bonus = 1.0 if profession.profession_group_id == target.profession_group_id else 0.0
+            same_parent_bonus = (
+                2.0
+                if target.parent_profession_id is not None
+                and profession.parent_profession_id == target.parent_profession_id
+                else 0.0
+            )
+            direct_hierarchy_bonus = (
+                1.5
+                if profession.parent_profession_id == target.id or target.parent_profession_id == profession.id
+                else 0.0
+            )
+            score = round(overlap_score * 10 + same_group_bonus + same_parent_bonus + direct_hierarchy_bonus, 4)
+            if score <= 0:
+                continue
+            scored.append(
+                SimilarProfessionOut(
+                    id=profession.id,
+                    name=profession.name,
+                    description=profession.description,
+                    profession_group_id=profession.profession_group_id,
+                    parent_profession_id=profession.parent_profession_id,
+                    similarity_score=score,
+                    shared_competency_count=shared_count,
+                )
+            )
+
+        return sorted(
+            scored,
+            key=lambda item: (-item.similarity_score, -item.shared_competency_count, item.name),
+        )[:limit]
 
     async def create_profession(self, db: AsyncSession, data: ProfessionCreate) -> Profession:
         await self.get_profession_group(db, data.profession_group_id)

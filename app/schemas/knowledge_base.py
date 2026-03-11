@@ -72,6 +72,16 @@ class ProfessionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SimilarProfessionOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    profession_group_id: int
+    parent_profession_id: Optional[int] = None
+    similarity_score: float
+    shared_competency_count: int
+
+
 class ProfessionLabelCreate(BaseModel):
     label: str
     label_type: LabelType = Field(

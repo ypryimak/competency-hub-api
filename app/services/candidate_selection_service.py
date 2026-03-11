@@ -21,6 +21,7 @@ from app.models.models import (
     CompetencyModel,
     Profession,
     Selection,
+    SelectionCriterion,
     SelectionExpert,
     SelectionExpertInvite,
     User,
@@ -36,6 +37,7 @@ from app.schemas.candidate_selection import (
     ExpertScoringStatus,
     ExpertScoringSubmit,
     SelectionCreate,
+    SelectionCriterionOut,
     SelectionDetail,
     SelectionExpertCreate,
     SelectionExpertInviteCreate,
@@ -77,15 +79,20 @@ class CandidateSelectionService:
             raise HTTPException(status_code=404, detail="Competency model not found")
         if model.status != ModelStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="Only completed competency models can be used")
-        final_competency_count = (
+        final_alternatives = (
             await db.execute(
-                select(func.count(Alternative.id)).where(
+                select(Alternative)
+                .options(
+                    selectinload(Alternative.competency),
+                    selectinload(Alternative.custom_competency),
+                )
+                .where(
                     Alternative.model_id == data.model_id,
                     Alternative.final_weight.isnot(None),
                 )
             )
-        ).scalar_one()
-        if final_competency_count == 0:
+        ).scalars().all()
+        if not final_alternatives:
             raise HTTPException(status_code=400, detail="Competency model has no final competencies")
         selection = Selection(
             user_id=user_id,
@@ -94,6 +101,18 @@ class CandidateSelectionService:
             status=SelectionStatus.DRAFT,
         )
         db.add(selection)
+        await db.flush()
+        for alternative in final_alternatives:
+            db.add(
+                SelectionCriterion(
+                    selection_id=selection.id,
+                    alternative_id=alternative.id,
+                    competency_id=alternative.competency_id,
+                    custom_competency_id=alternative.custom_competency_id,
+                    name=self._resolve_selection_criterion_name(alternative),
+                    weight=alternative.final_weight,
+                )
+            )
         await db.flush()
         await db.refresh(selection)
         return selection
@@ -417,13 +436,13 @@ class CandidateSelectionService:
                 raise HTTPException(status_code=400, detail=f"Score must be between 1 and 5, got {item.score}")
 
         candidate_ids = await self._get_selection_candidate_ids(db, selection_id)
-        competency_ids = await self._get_final_competency_ids(db, selection.model_id)
+        criterion_ids = await self._get_selection_criterion_ids(db, selection_id)
         expected_pairs = {
-            (candidate_id, competency_id)
+            (candidate_id, criterion_id)
             for candidate_id in candidate_ids
-            for competency_id in competency_ids
+            for criterion_id in criterion_ids
         }
-        submitted_pairs = [(item.candidate_id, item.competency_id) for item in data.scores]
+        submitted_pairs = [(item.candidate_id, item.selection_criterion_id) for item in data.scores]
         if set(submitted_pairs) != expected_pairs or len(submitted_pairs) != len(expected_pairs):
             raise HTTPException(
                 status_code=400,
@@ -436,7 +455,7 @@ class CandidateSelectionService:
                 CandidateScore(
                     candidate_id=item.candidate_id,
                     expert_id=expert.id,
-                    competency_id=item.competency_id,
+                    selection_criterion_id=item.selection_criterion_id,
                     score=item.score,
                 )
             )
@@ -449,8 +468,8 @@ class CandidateSelectionService:
         expert = await self._get_expert_by_user(db, selection_id, user_id)
         selection = await self._get_selection_for_status_check(db, selection_id)
         candidate_ids = await self._get_selection_candidate_ids(db, selection_id)
-        competency_ids = await self._get_final_competency_ids(db, selection.model_id)
-        total = len(candidate_ids) * len(competency_ids)
+        criterion_ids = await self._get_selection_criterion_ids(db, selection_id)
+        total = len(candidate_ids) * len(criterion_ids)
         scored = (
             await db.execute(select(func.count()).where(CandidateScore.expert_id == expert.id))
         ).scalar_one()
@@ -530,16 +549,16 @@ class CandidateSelectionService:
             await db.execute(select(SelectionExpert).where(SelectionExpert.selection_id == selection_id))
         ).scalars().all()
         candidate_ids = await self._get_selection_candidate_ids(db, selection_id)
-        competency_ids = await self._get_final_competency_ids(db, selection.model_id)
+        criterion_ids = await self._get_selection_criterion_ids(db, selection_id)
 
-        if experts and candidate_ids and competency_ids:
+        if experts and candidate_ids and criterion_ids:
             try:
                 await self._ensure_selection_scoring_complete(
                     db,
                     selection_id,
                     experts,
                     candidate_ids,
-                    competency_ids,
+                    criterion_ids,
                 )
             except HTTPException:
                 selection.status = SelectionStatus.CANCELLED
@@ -571,13 +590,13 @@ class CandidateSelectionService:
             raise HTTPException(status_code=400, detail="No accepted experts for this selection")
 
         candidate_ids = await self._get_selection_candidate_ids(db, selection_id)
-        competency_ids = await self._get_final_competency_ids(db, selection.model_id)
+        criterion_ids = await self._get_selection_criterion_ids(db, selection_id)
         await self._ensure_selection_scoring_complete(
             db,
             selection_id,
             experts,
             candidate_ids,
-            competency_ids,
+            criterion_ids,
         )
 
         all_scores = (
@@ -587,22 +606,22 @@ class CandidateSelectionService:
                 .where(SelectionExpert.selection_id == selection_id)
             )
         ).scalars().all()
-        comp_weights = await self._get_model_competency_weights(db, selection.model_id)
+        criterion_weights = await self._get_selection_criterion_weights(db, selection_id)
         expert_weights = self._normalize_expert_weights(experts)
         aggregated: dict[tuple[int, int], float] = {}
         for score in all_scores:
-            key = (score.candidate_id, score.competency_id)
+            key = (score.candidate_id, score.selection_criterion_id)
             aggregated[key] = aggregated.get(key, 0.0) + score.score * expert_weights.get(score.expert_id, 0.0)
         vikor_inputs = [
             VIKORInput(
                 candidate_id=candidate_id,
-                competency_id=competency_id,
-                aggregated_score=aggregated[(candidate_id, competency_id)],
+                criterion_id=criterion_id,
+                aggregated_score=aggregated[(candidate_id, criterion_id)],
             )
             for candidate_id in candidate_ids
-            for competency_id in competency_ids
+            for criterion_id in criterion_ids
         ]
-        vikor_results = run_vikor(vikor_inputs, comp_weights)
+        vikor_results = run_vikor(vikor_inputs, criterion_weights)
         for result in vikor_results:
             cs = (
                 await db.execute(
@@ -679,6 +698,7 @@ class CandidateSelectionService:
             .options(
                 selectinload(Selection.candidates).selectinload(CandidateSelection.candidate),
                 selectinload(Selection.experts),
+                selectinload(Selection.criteria),
                 selectinload(Selection.expert_invites),
             )
         )
@@ -765,30 +785,27 @@ class CandidateSelectionService:
             )
         ).scalars().all()
 
-    async def _get_final_competency_ids(self, db: AsyncSession, model_id: Optional[int]) -> list[int]:
-        if not model_id:
-            return []
+    async def _get_selection_criterion_ids(self, db: AsyncSession, selection_id: int) -> list[int]:
         return (
             await db.execute(
-                select(Alternative.competency_id).where(
-                    Alternative.model_id == model_id,
-                    Alternative.final_weight.isnot(None),
+                select(SelectionCriterion.id).where(
+                    SelectionCriterion.selection_id == selection_id
                 )
             )
         ).scalars().all()
 
-    async def _get_model_competency_weights(
-        self, db: AsyncSession, model_id: Optional[int]
+    async def _get_selection_criterion_weights(
+        self, db: AsyncSession, selection_id: int
     ) -> dict[int, float]:
-        if not model_id:
-            return {}
         result = await db.execute(
-            select(Alternative.competency_id, Alternative.final_weight).where(
-                Alternative.model_id == model_id,
-                Alternative.final_weight.isnot(None),
+            select(SelectionCriterion.id, SelectionCriterion.weight).where(
+                SelectionCriterion.selection_id == selection_id
             )
         )
-        return {row.competency_id: float(row.final_weight) for row in result.all()}
+        return {
+            row.id: float(row.weight) if row.weight is not None else 0.0
+            for row in result.all()
+        }
 
     def _normalize_expert_weights(self, experts: list[SelectionExpert]) -> dict[int, float]:
         weights = {item.id: float(item.weight) if item.weight else 1.0 for item in experts}
@@ -803,9 +820,9 @@ class CandidateSelectionService:
         selection_id: int,
         experts: list[SelectionExpert],
         candidate_ids: list[int],
-        competency_ids: list[int],
+        criterion_ids: list[int],
     ) -> None:
-        expected_total = len(experts) * len(candidate_ids) * len(competency_ids)
+        expected_total = len(experts) * len(candidate_ids) * len(criterion_ids)
         if expected_total == 0:
             raise HTTPException(status_code=400, detail="Selection scoring matrix is empty")
         actual_total = (
@@ -897,6 +914,7 @@ class CandidateSelectionService:
                 for item in selection.candidates
             ],
             experts=[SelectionExpertOut.model_validate(item) for item in selection.experts],
+            criteria=[SelectionCriterionOut.model_validate(item) for item in selection.criteria],
             expert_invites=[self._serialize_expert_invite(item) for item in selection.expert_invites],
         )
 
@@ -929,6 +947,13 @@ class CandidateSelectionService:
             accepted_by_user_id=invite.accepted_by_user_id,
             created_at=invite.created_at,
         )
+
+    def _resolve_selection_criterion_name(self, alternative: Alternative) -> str:
+        if alternative.custom_competency is not None:
+            return alternative.custom_competency.name
+        if alternative.competency is not None:
+            return alternative.competency.name
+        raise HTTPException(status_code=400, detail="Alternative has no linked competency")
 
     def _extract_text(
         self,

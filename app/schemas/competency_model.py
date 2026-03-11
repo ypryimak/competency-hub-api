@@ -33,6 +33,7 @@ class CompetencyModelDetail(CompetencyModelOut):
     experts: list["ModelExpertOut"] = []
     expert_invites: list["ExpertInviteOut"] = []
     criteria: list["CriterionOut"] = []
+    custom_competencies: list["CustomCompetencyOut"] = []
     alternatives: list["AlternativeOut"] = []
 
 
@@ -110,10 +111,32 @@ class AlternativeCreate(BaseModel):
 class AlternativeOut(BaseModel):
     id: int
     model_id: int
-    competency_id: int
+    competency_id: Optional[int]
+    custom_competency_id: Optional[int] = None
     competency_name: Optional[str] = None
+    source_type: str
     weight: Optional[float]
     final_weight: Optional[float]
+
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
+
+
+class CustomCompetencyCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class CustomCompetencyUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class CustomCompetencyOut(BaseModel):
+    id: int
+    model_id: int
+    name: str
+    description: Optional[str] = None
+    created_at: datetime
 
     model_config = {"from_attributes": True, "protected_namespaces": ()}
 

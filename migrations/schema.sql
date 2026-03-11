@@ -199,6 +199,15 @@ CREATE TABLE IF NOT EXISTS competency_model.criteria (
     weight   NUMERIC
 );
 
+CREATE TABLE IF NOT EXISTS competency_model.custom_competencies (
+    id          SERIAL PRIMARY KEY,
+    model_id    INTEGER NOT NULL REFERENCES competency_model.models(id) ON DELETE CASCADE,
+    name        VARCHAR NOT NULL,
+    description TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (model_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS competency_model.criterion_ranks (
     criterion_id INTEGER NOT NULL REFERENCES competency_model.criteria(id) ON DELETE CASCADE,
     expert_id    INTEGER NOT NULL REFERENCES competency_model.experts(id) ON DELETE CASCADE,
@@ -207,11 +216,18 @@ CREATE TABLE IF NOT EXISTS competency_model.criterion_ranks (
 );
 
 CREATE TABLE IF NOT EXISTS competency_model.alternatives (
-    id            SERIAL PRIMARY KEY,
-    model_id      INTEGER NOT NULL REFERENCES competency_model.models(id) ON DELETE CASCADE,
-    competency_id INTEGER NOT NULL REFERENCES job.competencies(id) ON DELETE RESTRICT,
-    weight        NUMERIC,
-    final_weight  NUMERIC
+    id                   SERIAL PRIMARY KEY,
+    model_id             INTEGER NOT NULL REFERENCES competency_model.models(id) ON DELETE CASCADE,
+    competency_id        INTEGER REFERENCES job.competencies(id) ON DELETE RESTRICT,
+    custom_competency_id INTEGER REFERENCES competency_model.custom_competencies(id) ON DELETE CASCADE,
+    weight               NUMERIC,
+    final_weight         NUMERIC,
+    UNIQUE (model_id, competency_id),
+    UNIQUE (model_id, custom_competency_id),
+    CHECK (
+        (competency_id IS NOT NULL AND custom_competency_id IS NULL) OR
+        (competency_id IS NULL AND custom_competency_id IS NOT NULL)
+    )
 );
 
 CREATE TABLE IF NOT EXISTS competency_model.alternative_ranks (
@@ -269,6 +285,21 @@ CREATE TABLE IF NOT EXISTS candidate_evaluation.experts (
     weight       NUMERIC
 );
 
+CREATE TABLE IF NOT EXISTS candidate_evaluation.selection_criteria (
+    id                   SERIAL PRIMARY KEY,
+    selection_id         INTEGER NOT NULL REFERENCES candidate_evaluation.selections(id) ON DELETE CASCADE,
+    alternative_id       INTEGER REFERENCES competency_model.alternatives(id) ON DELETE SET NULL,
+    competency_id        INTEGER REFERENCES job.competencies(id) ON DELETE SET NULL,
+    custom_competency_id INTEGER REFERENCES competency_model.custom_competencies(id) ON DELETE SET NULL,
+    name                 VARCHAR NOT NULL,
+    weight               NUMERIC,
+    UNIQUE (selection_id, alternative_id),
+    CHECK (
+        (competency_id IS NOT NULL AND custom_competency_id IS NULL) OR
+        (competency_id IS NULL AND custom_competency_id IS NOT NULL)
+    )
+);
+
 CREATE TABLE IF NOT EXISTS candidate_evaluation.expert_invites (
     id                  SERIAL PRIMARY KEY,
     selection_id        INTEGER NOT NULL REFERENCES candidate_evaluation.selections(id) ON DELETE CASCADE,
@@ -281,11 +312,11 @@ CREATE TABLE IF NOT EXISTS candidate_evaluation.expert_invites (
 );
 
 CREATE TABLE IF NOT EXISTS candidate_evaluation.candidate_scores (
-    candidate_id  INTEGER NOT NULL REFERENCES candidate_evaluation.candidates(id) ON DELETE CASCADE,
-    expert_id     INTEGER NOT NULL REFERENCES candidate_evaluation.experts(id) ON DELETE CASCADE,
-    competency_id INTEGER NOT NULL REFERENCES job.competencies(id) ON DELETE RESTRICT,
-    score         INTEGER NOT NULL CHECK (score BETWEEN 1 AND 5),
-    PRIMARY KEY (candidate_id, expert_id, competency_id)
+    candidate_id           INTEGER NOT NULL REFERENCES candidate_evaluation.candidates(id) ON DELETE CASCADE,
+    expert_id              INTEGER NOT NULL REFERENCES candidate_evaluation.experts(id) ON DELETE CASCADE,
+    selection_criterion_id INTEGER NOT NULL REFERENCES candidate_evaluation.selection_criteria(id) ON DELETE CASCADE,
+    score                  INTEGER NOT NULL CHECK (score BETWEEN 1 AND 5),
+    PRIMARY KEY (candidate_id, expert_id, selection_criterion_id)
 );
 
 -- ============================================================
@@ -327,6 +358,8 @@ CREATE INDEX IF NOT EXISTS idx_expert_invites_email
     ON competency_model.expert_invites(email);
 CREATE INDEX IF NOT EXISTS idx_criteria_model
     ON competency_model.criteria(model_id);
+CREATE INDEX IF NOT EXISTS idx_custom_competencies_model
+    ON competency_model.custom_competencies(model_id);
 CREATE INDEX IF NOT EXISTS idx_alternatives_model
     ON competency_model.alternatives(model_id);
 
@@ -340,6 +373,8 @@ CREATE INDEX IF NOT EXISTS idx_candidates_user
     ON candidate_evaluation.candidates(user_id);
 CREATE INDEX IF NOT EXISTS idx_sel_experts_sel
     ON candidate_evaluation.experts(selection_id);
+CREATE INDEX IF NOT EXISTS idx_selection_criteria_selection
+    ON candidate_evaluation.selection_criteria(selection_id);
 CREATE INDEX IF NOT EXISTS idx_selection_invites_selection
     ON candidate_evaluation.expert_invites(selection_id);
 CREATE INDEX IF NOT EXISTS idx_selection_invites_email
@@ -370,6 +405,7 @@ ALTER TABLE competency_model.models ENABLE ROW LEVEL SECURITY;
 ALTER TABLE competency_model.experts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE competency_model.expert_invites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE competency_model.criteria ENABLE ROW LEVEL SECURITY;
+ALTER TABLE competency_model.custom_competencies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE competency_model.criterion_ranks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE competency_model.alternatives ENABLE ROW LEVEL SECURITY;
 ALTER TABLE competency_model.alternative_ranks ENABLE ROW LEVEL SECURITY;
@@ -378,6 +414,7 @@ ALTER TABLE candidate_evaluation.candidates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE candidate_evaluation.candidate_selections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE candidate_evaluation.candidate_competencies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE candidate_evaluation.experts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE candidate_evaluation.selection_criteria ENABLE ROW LEVEL SECURITY;
 ALTER TABLE candidate_evaluation.expert_invites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE candidate_evaluation.candidate_scores ENABLE ROW LEVEL SECURITY;
 
@@ -419,6 +456,7 @@ CREATE POLICY "service_role_all" ON competency_model.models FOR ALL TO service_r
 CREATE POLICY "service_role_all" ON competency_model.experts FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON competency_model.expert_invites FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON competency_model.criteria FOR ALL TO service_role USING (true);
+CREATE POLICY "service_role_all" ON competency_model.custom_competencies FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON competency_model.criterion_ranks FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON competency_model.alternatives FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON competency_model.alternative_ranks FOR ALL TO service_role USING (true);
@@ -428,5 +466,6 @@ CREATE POLICY "service_role_all" ON candidate_evaluation.candidates FOR ALL TO s
 CREATE POLICY "service_role_all" ON candidate_evaluation.candidate_selections FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON candidate_evaluation.candidate_competencies FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON candidate_evaluation.experts FOR ALL TO service_role USING (true);
+CREATE POLICY "service_role_all" ON candidate_evaluation.selection_criteria FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON candidate_evaluation.expert_invites FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON candidate_evaluation.candidate_scores FOR ALL TO service_role USING (true);

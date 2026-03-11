@@ -19,7 +19,7 @@ from dataclasses import dataclass
 @dataclass
 class VIKORInput:
     candidate_id: int
-    competency_id: int
+    criterion_id: int
     aggregated_score: float     # вже зважена агрегована оцінка по всіх експертах
 
 
@@ -34,7 +34,7 @@ class VIKOROutput:
 
 def run_vikor(
     scores: list[VIKORInput],
-    competency_weights: dict[int, float],   # {competency_id: weight} з МК
+    criterion_weights: dict[int, float],   # {criterion_id: weight} з МК/selection
     v: float = 0.5,
 ) -> list[VIKOROutput]:
     """
@@ -42,7 +42,7 @@ def run_vikor(
 
     Args:
         scores: агреговані оцінки кандидатів по компетенціях
-        competency_weights: ваги компетенцій з МК (final_weight після OPA)
+        criterion_weights: ваги критеріїв відбору
         v: параметр компромісу [0, 1], зазвичай 0.5
     """
     if not scores:
@@ -50,7 +50,7 @@ def run_vikor(
 
     # ── Збираємо унікальні id ────────────────────────────
     candidate_ids = list({s.candidate_id for s in scores})
-    competency_ids = list({s.competency_id for s in scores})
+    criterion_ids = list({s.criterion_id for s in scores})
 
     if len(candidate_ids) < 2:
         # Для одного кандидата VIKOR не має сенсу — повертаємо rank=1
@@ -59,25 +59,25 @@ def run_vikor(
             s_score=0.0, r_score=0.0, q_score=0.0, rank=1
         )]
 
-    # ── Матриця оцінок: {(candidate_id, competency_id): score} ──
+    # ── Матриця оцінок: {(candidate_id, criterion_id): score} ──
     score_matrix: dict[tuple[int, int], float] = {
-        (s.candidate_id, s.competency_id): s.aggregated_score
+        (s.candidate_id, s.criterion_id): s.aggregated_score
         for s in scores
     }
 
     # ── Нормалізовані ваги компетенцій ──────────────────
-    total_w = sum(competency_weights.get(cid, 0) for cid in competency_ids)
+    total_w = sum(criterion_weights.get(cid, 0) for cid in criterion_ids)
     if total_w == 0:
         # Рівні ваги якщо не задані
-        w = {cid: 1.0 / len(competency_ids) for cid in competency_ids}
+        w = {cid: 1.0 / len(criterion_ids) for cid in criterion_ids}
     else:
-        w = {cid: competency_weights.get(cid, 0) / total_w for cid in competency_ids}
+        w = {cid: criterion_weights.get(cid, 0) / total_w for cid in criterion_ids}
 
     # ── Ідеал f* і антиідеал f- для кожної компетенції ──
     # Вища оцінка = краще (benefit criterion)
     f_best: dict[int, float] = {}
     f_worst: dict[int, float] = {}
-    for cid in competency_ids:
+    for cid in criterion_ids:
         vals = [
             score_matrix.get((aid, cid), 0.0)
             for aid in candidate_ids
@@ -91,7 +91,7 @@ def run_vikor(
 
     for aid in candidate_ids:
         weighted_diffs = []
-        for cid in competency_ids:
+        for cid in criterion_ids:
             diff_range = f_best[cid] - f_worst[cid]
             if diff_range == 0:
                 normalized = 0.0

@@ -29,6 +29,7 @@ class SelectionOut(BaseModel):
 class SelectionDetail(SelectionOut):
     candidates: list["CandidateSelectionOut"] = []
     experts: list["SelectionExpertOut"] = []
+    criteria: list["SelectionCriterionOut"] = []
     expert_invites: list["SelectionExpertInviteOut"] = []
 
 
@@ -129,7 +130,7 @@ class SelectionExpertInviteOut(BaseModel):
 
 class CandidateScoreSubmit(BaseModel):
     candidate_id: int
-    competency_id: int
+    selection_criterion_id: int
     score: int
 
 
@@ -154,6 +155,18 @@ class CandidateRankOut(BaseModel):
 class VIKORResult(BaseModel):
     ranked_candidates: list[CandidateRankOut]
     status: str
+
+
+class SelectionCriterionOut(BaseModel):
+    id: int
+    selection_id: int
+    alternative_id: Optional[int] = None
+    competency_id: Optional[int] = None
+    custom_competency_id: Optional[int] = None
+    name: str
+    weight: Optional[float] = None
+
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 SelectionDetail.model_rebuild()

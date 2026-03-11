@@ -179,6 +179,31 @@ def main() -> None:
         {"name": "Business relevance"},
     )
 
+    print("\n[3.1] Custom competencies")
+    temp_custom = post(
+        hr_token,
+        f"/competency-models/{model_id}/custom-competencies",
+        {"name": f"[TEST {marker}] Temporary custom competency"},
+    )
+    kept_custom = post(
+        hr_token,
+        f"/competency-models/{model_id}/custom-competencies",
+        {
+            "name": f"[TEST {marker}] Domain expertise",
+            "description": "Specific domain knowledge not covered by the system catalog",
+        },
+    )
+    get(hr_token, f"/competency-models/{model_id}/custom-competencies")
+    patch(
+        hr_token,
+        f"/competency-models/{model_id}/custom-competencies/{kept_custom['id']}",
+        {"name": f"[TEST {marker}] Product domain expertise"},
+    )
+    delete(
+        hr_token,
+        f"/competency-models/{model_id}/custom-competencies/{temp_custom['id']}",
+    )
+
     recommendations = get(hr_token, f"/competency-models/{model_id}/recommendations")
     temp_alternative = post(
         hr_token,
@@ -189,8 +214,11 @@ def main() -> None:
 
     detail = get(hr_token, f"/competency-models/{model_id}")
     alternative_ids = [item["id"] for item in detail["alternatives"]]
+    custom_alternatives = [item for item in detail["alternatives"] if item["source_type"] == "custom"]
     assert len(recommendations) >= 2, "Expected recommendations for the model"
     assert len(alternative_ids) >= 2, "Expected default alternatives from profession competencies"
+    assert detail["custom_competencies"], "Expected custom competencies in model detail"
+    assert custom_alternatives, "Expected custom alternative generated from custom competency"
 
     print("\n[4] Invite acceptance flow")
     invited_user, invited_token, _ = register_user("invited", email=invited_email)

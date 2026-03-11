@@ -50,6 +50,7 @@ from app.schemas.knowledge_base import (
     ProfessionOut,
     ProfessionUpdate,
     RecalculateProfessionCompetenciesResponse,
+    SimilarProfessionOut,
 )
 from app.services.knowledge_base_service import knowledge_base_service
 
@@ -133,6 +134,15 @@ async def get_profession(
     _: User = Depends(get_current_user),
 ):
     return await knowledge_base_service.get_profession(db, profession_id)
+
+
+@professions_router.get("/professions/{profession_id}/similar", response_model=list[SimilarProfessionOut])
+async def get_similar_professions(
+    profession_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return await knowledge_base_service.get_similar_professions(db, profession_id)
 
 
 @professions_router.get("/professions/{profession_id}/labels", response_model=list[ProfessionLabelOut])
