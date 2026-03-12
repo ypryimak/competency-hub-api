@@ -51,6 +51,7 @@ from app.services.opa_service import (
     ExpertInput,
     run_opa,
 )
+from app.services.email_service import email_service
 
 LINK_TYPE_SCORES = {
     "esco_essential": 2.0,
@@ -211,6 +212,7 @@ class CompetencyModelService:
         db.add(invite)
         await db.flush()
         await db.refresh(invite)
+        await email_service.send_competency_model_invite(db, invite.id)
         return invite
 
     async def update_expert_invite(
@@ -502,6 +504,7 @@ class CompetencyModelService:
         invite.accepted_by_user_id = user.id
         await db.flush()
         await db.refresh(expert)
+        await email_service.send_competency_model_invite_accepted(db, invite.model_id, user.id)
         return expert
 
     async def cancel_model(self, db: AsyncSession, model_id: int, user_id: int) -> CompetencyModel:
@@ -569,6 +572,9 @@ class CompetencyModelService:
             if sorted(ranks) != list(range(1, len(ranks) + 1)):
                 raise HTTPException(status_code=400, detail="Alternative ranks must be unique and continuous per criterion")
 
+        had_existing_submission = (
+            await db.execute(select(func.count(CriterionRank.criterion_id)).where(CriterionRank.expert_id == expert.id))
+        ).scalar_one() > 0
         await db.execute(delete(CriterionRank).where(CriterionRank.expert_id == expert.id))
         await db.execute(delete(AlternativeRank).where(AlternativeRank.expert_id == expert.id))
 
@@ -585,6 +591,8 @@ class CompetencyModelService:
             )
 
         await db.flush()
+        if not had_existing_submission:
+            await email_service.send_competency_model_submission_received(db, model_id, current_user_id)
         return await self.get_expert_evaluation_status(db, model_id, current_user_id)
 
     async def get_expert_evaluation_status(

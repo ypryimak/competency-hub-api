@@ -1,0 +1,9 @@
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2937;">
+    <p>Hello {{ recipient_name }},</p>
+    <p>{{ expert_name }} ({{ expert_email }}) accepted the invite for your {{ resource_kind }} <strong>{{ resource_name }}</strong>.</p>
+    {% if app_url %}
+    <p><a href="{{ app_url }}">Open CompetencyHub</a></p>
+    {% endif %}
+  </body>
+</html>

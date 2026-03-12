@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     JOB_DERIVED_MIN_COUNT: int = 2
     JOB_DERIVED_MIN_FREQUENCY: float = 0.03
 
+    # Email / Resend
+    EMAILS_ENABLED: bool = False
+    EMAIL_FROM: Optional[str] = None
+    EMAIL_REPLY_TO: Optional[str] = None
+    FRONTEND_BASE_URL: Optional[str] = None
+    RESEND_API_KEY: Optional[str] = None
+    EMAIL_DEADLINE_REMINDER_DAYS: int = 3
+
     @property
     def cors_origins(self) -> list[str]:
         if self.BACKEND_CORS_ORIGINS.strip():
@@ -43,6 +51,13 @@ class Settings(BaseSettings):
         if self.ENVIRONMENT == "development":
             return ["*"]
         return []
+
+    @property
+    def frontend_base_url(self) -> Optional[str]:
+        if not self.FRONTEND_BASE_URL:
+            return None
+        value = self.FRONTEND_BASE_URL.strip().rstrip("/")
+        return value or None
 
     class Config:
         env_file = ".env"

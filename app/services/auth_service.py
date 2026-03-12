@@ -7,6 +7,7 @@ from app.models.models import User
 from app.core.security import verify_password, get_password_hash, create_access_token, create_refresh_token, decode_token
 from app.core.enums import UserRole
 from app.schemas.auth import UserRegister, UserLogin, TokenResponse
+from app.services.email_service import email_service
 
 
 class AuthService:
@@ -28,6 +29,7 @@ class AuthService:
         db.add(user)
         await db.flush()
         await db.refresh(user)
+        await email_service.send_welcome_email(db, user.id)
         return user
 
     async def login(self, db: AsyncSession, data: UserLogin) -> TokenResponse:

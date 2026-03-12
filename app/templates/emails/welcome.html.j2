@@ -1,0 +1,10 @@
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2937;">
+    <p>Hello {{ recipient_name }},</p>
+    <p>Welcome to {{ product_name }}.</p>
+    <p>Your account is ready and you can start working with competency models and candidate selections.</p>
+    {% if app_url %}
+    <p><a href="{{ app_url }}">Open CompetencyHub</a></p>
+    {% endif %}
+  </body>
+</html>

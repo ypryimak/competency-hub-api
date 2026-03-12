@@ -1,0 +1,11 @@
+Hello {{ recipient_name }},
+
+This is a reminder that {{ resource_kind }} "{{ resource_name }}" is due in {{ days_before_deadline }} day(s).
+{% if deadline %}
+Deadline: {{ deadline }}
+{% endif %}
+Owner: {{ owner_name }}
+{% if app_url %}
+
+Open CompetencyHub: {{ app_url }}
+{% endif %}

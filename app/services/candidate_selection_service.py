@@ -49,6 +49,7 @@ from app.schemas.candidate_selection import (
     VIKORResult,
 )
 from app.services.document_processing_service import document_processing_service
+from app.services.email_service import email_service
 from app.services.storage_service import storage_service
 from app.services.vikor_service import VIKORInput, run_vikor
 
@@ -352,6 +353,7 @@ class CandidateSelectionService:
         db.add(invite)
         await db.flush()
         await db.refresh(invite)
+        await email_service.send_selection_invite(db, invite.id)
         return invite
 
     async def update_expert_invite(
@@ -449,6 +451,9 @@ class CandidateSelectionService:
                 detail="Scores must cover every candidate for every final competency exactly once",
             )
 
+        had_existing_submission = (
+            await db.execute(select(func.count()).where(CandidateScore.expert_id == expert.id))
+        ).scalar_one() > 0
         await db.execute(delete(CandidateScore).where(CandidateScore.expert_id == expert.id))
         for item in data.scores:
             db.add(
@@ -460,6 +465,8 @@ class CandidateSelectionService:
                 )
             )
         await db.flush()
+        if not had_existing_submission:
+            await email_service.send_selection_submission_received(db, selection_id, current_user_id)
         return await self.get_expert_scoring_status(db, selection_id, current_user_id)
 
     async def get_expert_scoring_status(
@@ -534,6 +541,7 @@ class CandidateSelectionService:
         invite.accepted_by_user_id = user.id
         await db.flush()
         await db.refresh(expert)
+        await email_service.send_selection_invite_accepted(db, invite.selection_id, user.id)
         return expert
 
     async def calculate_vikor(self, db: AsyncSession, selection_id: int, user_id: int) -> VIKORResult:

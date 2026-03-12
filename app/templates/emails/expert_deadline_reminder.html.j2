@@ -1,0 +1,13 @@
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2937;">
+    <p>Hello {{ recipient_name }},</p>
+    <p>This is a reminder that {{ resource_kind }} <strong>{{ resource_name }}</strong> is due in {{ days_before_deadline }} day(s).</p>
+    {% if deadline %}
+    <p>Deadline: {{ deadline }}</p>
+    {% endif %}
+    <p>Owner: {{ owner_name }}</p>
+    {% if app_url %}
+    <p><a href="{{ app_url }}">Open CompetencyHub</a></p>
+    {% endif %}
+  </body>
+</html>

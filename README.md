@@ -183,6 +183,12 @@ Optional variables:
 - `BACKGROUND_JOBS_POLL_SECONDS`
 - `JOB_DERIVED_MIN_COUNT`
 - `JOB_DERIVED_MIN_FREQUENCY`
+- `EMAILS_ENABLED`
+- `EMAIL_FROM`
+- `EMAIL_REPLY_TO`
+- `FRONTEND_BASE_URL`
+- `RESEND_API_KEY`
+- `EMAIL_DEADLINE_REMINDER_DAYS`
 
 `BACKEND_CORS_ORIGINS` is a comma-separated list of frontend origins allowed to call the API from a browser.
 
@@ -196,11 +202,17 @@ Notes:
 - in local development, if `BACKEND_CORS_ORIGINS` is empty and `ENVIRONMENT=development`, the API allows all origins;
 - in production, set explicit frontend origins instead of relying on `*`.
 - background jobs are disabled by default; enable them explicitly only on the instance that should process deadlines.
+- transactional emails are disabled by default; set `EMAILS_ENABLED=true`, `EMAIL_FROM`, and `RESEND_API_KEY` to enable Resend delivery;
+- `FRONTEND_BASE_URL` is used in email templates to point users back to the app;
+- deadline reminders are sent by the background runner and deduplicated through the `emails` log table.
 
 ### 4. Apply database schema
 
 For a fresh database:
 - run `migrations/schema.sql`
+
+For an existing database that already has `public.emails`:
+- run `migrations/versions/20260312_email_subsystem.sql`
 
 ### 5. Seed the knowledge base
 

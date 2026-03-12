@@ -1,0 +1,16 @@
+Hello {{ recipient_name }},
+
+{{ owner_name }} invited you to participate in a {{ workflow_label|lower }}.
+
+{{ resource_name }}
+{% if assignment_details %}
+{{ assignment_details }}
+{% endif %}
+{% if deadline %}
+Deadline: {{ deadline }}
+{% endif %}
+
+Sign in with this email address to see and accept the invite.
+{% if app_url %}
+Open CompetencyHub: {{ app_url }}
+{% endif %}

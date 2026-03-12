@@ -1,6 +1,7 @@
 # Environment
 .env
 .env.local
+.env.prod
 
 # Virtual environment
 .venv/

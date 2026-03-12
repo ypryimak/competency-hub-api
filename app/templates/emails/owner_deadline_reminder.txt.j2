@@ -1,0 +1,10 @@
+Hello {{ recipient_name }},
+
+Your {{ resource_kind }} "{{ resource_name }}" reaches its deadline in {{ days_before_deadline }} day(s).
+{% if deadline %}
+Deadline: {{ deadline }}
+{% endif %}
+{% if app_url %}
+
+Open CompetencyHub: {{ app_url }}
+{% endif %}

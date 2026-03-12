@@ -1,0 +1,17 @@
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2937;">
+    <p>Hello {{ recipient_name }},</p>
+    <p>{{ owner_name }} invited you to participate in a {{ workflow_label|lower }}.</p>
+    <p><strong>{{ resource_name }}</strong></p>
+    {% if assignment_details %}
+    <p>{{ assignment_details }}</p>
+    {% endif %}
+    {% if deadline %}
+    <p>Deadline: {{ deadline }}</p>
+    {% endif %}
+    <p>Sign in with this email address to see and accept the invite.</p>
+    {% if app_url %}
+    <p><a href="{{ app_url }}">Open CompetencyHub</a></p>
+    {% endif %}
+  </body>
+</html>

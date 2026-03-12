@@ -1,4 +1,4 @@
-from enum import IntEnum
+from enum import Enum, IntEnum
 
 
 class UserRole(IntEnum):
@@ -35,3 +35,21 @@ class LetterType(IntEnum):
     ALL_EVALUATIONS_COLLECTED = 6
     MODEL_RESULT = 7
     SELECTION_RESULT = 8
+
+
+class EmailDeliveryStatus(str, Enum):
+    PENDING = "pending"
+    SENT = "sent"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class EmailTemplateKey(str, Enum):
+    WELCOME = "welcome"
+    EXPERT_INVITE = "expert_invite"
+    EXPERT_DEADLINE_REMINDER = "expert_deadline_reminder"
+    OWNER_DEADLINE_REMINDER = "owner_deadline_reminder"
+    OWNER_DEADLINE_REACHED_COMPLETED = "owner_deadline_reached_completed"
+    OWNER_DEADLINE_REACHED_CANCELLED = "owner_deadline_reached_cancelled"
+    OWNER_INVITE_ACCEPTED = "owner_invite_accepted"
+    OWNER_SUBMISSION_RECEIVED = "owner_submission_received"
