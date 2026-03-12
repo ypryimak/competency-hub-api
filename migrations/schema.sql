@@ -259,16 +259,19 @@ CREATE TABLE IF NOT EXISTS candidate_evaluation.selections (
 );
 
 CREATE TABLE IF NOT EXISTS candidate_evaluation.candidates (
-    id            SERIAL PRIMARY KEY,
-    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    name          VARCHAR,
-    email         VARCHAR,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    profession_id INTEGER NOT NULL REFERENCES job.professions(id) ON DELETE RESTRICT,
-    cv_file_path  VARCHAR,
+    id                   SERIAL PRIMARY KEY,
+    user_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    name                 VARCHAR,
+    email                VARCHAR,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    profession_id        INTEGER NOT NULL REFERENCES job.professions(id) ON DELETE RESTRICT,
+    cv_file_path         VARCHAR,
     cv_original_filename VARCHAR,
-    cv_mime_type  VARCHAR,
-    cv_uploaded_at TIMESTAMPTZ
+    cv_mime_type         VARCHAR,
+    cv_uploaded_at       TIMESTAMPTZ,
+    cv_parse_status      VARCHAR NOT NULL DEFAULT 'not_uploaded',
+    cv_parsed_at         TIMESTAMPTZ,
+    cv_parse_error       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS candidate_evaluation.candidate_selections (

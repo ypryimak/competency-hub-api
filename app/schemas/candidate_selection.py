@@ -1,7 +1,10 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field, computed_field
+
+from app.core.enums import CandidateCVParseStatus, WorkflowStatusName, get_workflow_status_name
+from app.schemas.common import UserSummaryOut
 
 
 class SelectionCreate(BaseModel):
@@ -20,15 +23,24 @@ class SelectionOut(BaseModel):
     user_id: int
     model_id: Optional[int]
     evaluation_deadline: Optional[datetime]
-    status: Optional[int]
+    status_code: Optional[int] = Field(
+        default=None,
+        validation_alias=AliasChoices("status_code", "status"),
+        description="Legacy numeric workflow status code.",
+    )
     created_at: datetime
+
+    @computed_field
+    @property
+    def status(self) -> Optional[WorkflowStatusName]:
+        return get_workflow_status_name(self.status_code)
 
     model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class SelectionDetail(SelectionOut):
     candidates: list["CandidateSelectionOut"] = []
-    experts: list["SelectionExpertOut"] = []
+    experts: list["SelectionExpertDetailOut"] = []
     criteria: list["SelectionCriterionOut"] = []
     expert_invites: list["SelectionExpertInviteOut"] = []
 
@@ -49,6 +61,10 @@ class CandidateOut(BaseModel):
     cv_original_filename: Optional[str]
     cv_mime_type: Optional[str]
     cv_uploaded_at: Optional[datetime]
+    cv_parse_status: CandidateCVParseStatus
+    cv_parsed_at: Optional[datetime]
+    cv_parse_error: Optional[str]
+    matched_competency_count: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -104,6 +120,10 @@ class SelectionExpertOut(BaseModel):
     weight: Optional[float]
 
     model_config = {"from_attributes": True}
+
+
+class SelectionExpertDetailOut(SelectionExpertOut):
+    user: Optional[UserSummaryOut] = None
 
 
 class SelectionExpertInviteCreate(BaseModel):

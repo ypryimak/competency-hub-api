@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.enums import ModelStatus, SelectionStatus
+from app.core.enums import CandidateCVParseStatus, ModelStatus, SelectionStatus
 from app.models.models import (
     Alternative,
     Candidate,
@@ -30,6 +30,7 @@ from app.schemas.candidate_selection import (
     CVParseResponse,
     CandidateCreate,
     CandidateCVSignedUrl,
+    CandidateOut,
     CandidateSelectionOut,
     CandidateWithCompetencies,
     CandidateRankOut,
@@ -40,6 +41,7 @@ from app.schemas.candidate_selection import (
     SelectionCriterionOut,
     SelectionDetail,
     SelectionExpertCreate,
+    SelectionExpertDetailOut,
     SelectionExpertInviteCreate,
     SelectionExpertInviteOut,
     SelectionExpertInviteUpdate,
@@ -48,6 +50,7 @@ from app.schemas.candidate_selection import (
     SelectionUpdate,
     VIKORResult,
 )
+from app.schemas.common import UserSummaryOut
 from app.services.document_processing_service import document_processing_service
 from app.services.email_service import email_service
 from app.services.storage_service import storage_service
@@ -134,13 +137,21 @@ class CandidateSelectionService:
         self._require_status(selection, SelectionStatus.DRAFT)
         await db.delete(selection)
 
-    async def list_candidates(self, db: AsyncSession, user_id: int) -> Sequence[Candidate]:
+    async def list_candidates(self, db: AsyncSession, user_id: int) -> list[CandidateOut]:
         result = await db.execute(
-            select(Candidate)
+            select(
+                Candidate,
+                func.count(CandidateCompetency.competency_id).label("matched_competency_count"),
+            )
+            .outerjoin(CandidateCompetency, CandidateCompetency.candidate_id == Candidate.id)
             .where(Candidate.user_id == user_id)
+            .group_by(Candidate.id)
             .order_by(Candidate.created_at.desc())
         )
-        return result.scalars().all()
+        return [
+            self._serialize_candidate_summary(candidate, matched_competency_count)
+            for candidate, matched_competency_count in result.all()
+        ]
 
     async def get_candidate(
         self, db: AsyncSession, candidate_id: int, user_id: int
@@ -148,7 +159,7 @@ class CandidateSelectionService:
         candidate = await self._get_candidate_orm(db, candidate_id, user_id)
         return self._serialize_candidate(candidate)
 
-    async def create_candidate(self, db: AsyncSession, data: CandidateCreate, user_id: int) -> Candidate:
+    async def create_candidate(self, db: AsyncSession, data: CandidateCreate, user_id: int) -> CandidateOut:
         profession = (
             await db.execute(select(Profession).where(Profession.id == data.profession_id))
         ).scalar_one_or_none()
@@ -159,11 +170,12 @@ class CandidateSelectionService:
             name=data.name,
             email=data.email,
             profession_id=data.profession_id,
+            cv_parse_status=CandidateCVParseStatus.NOT_UPLOADED,
         )
         db.add(candidate)
         await db.flush()
         await db.refresh(candidate)
-        return candidate
+        return self._serialize_candidate_summary(candidate, 0)
 
     async def upload_candidate_cv(
         self,
@@ -173,7 +185,7 @@ class CandidateSelectionService:
         filename: str | None,
         content_type: str | None,
         content: bytes,
-    ) -> Candidate:
+    ) -> CandidateOut:
         candidate = await self._get_candidate_orm(db, candidate_id, user_id)
         if not content:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
@@ -189,6 +201,12 @@ class CandidateSelectionService:
         candidate.cv_original_filename = filename
         candidate.cv_mime_type = content_type
         candidate.cv_uploaded_at = datetime.now(timezone.utc)
+        candidate.cv_parse_status = CandidateCVParseStatus.UPLOADED
+        candidate.cv_parsed_at = None
+        candidate.cv_parse_error = None
+        await db.execute(
+            delete(CandidateCompetency).where(CandidateCompetency.candidate_id == candidate_id)
+        )
         await db.flush()
         await db.refresh(candidate)
         if old_path:
@@ -196,9 +214,9 @@ class CandidateSelectionService:
                 await storage_service.delete_cv(old_path)
             except Exception:
                 pass
-        return candidate
+        return self._serialize_candidate_summary(candidate, 0)
 
-    async def delete_candidate_cv(self, db: AsyncSession, candidate_id: int, user_id: int) -> Candidate:
+    async def delete_candidate_cv(self, db: AsyncSession, candidate_id: int, user_id: int) -> CandidateOut:
         candidate = await self._get_candidate_orm(db, candidate_id, user_id)
         if not candidate.cv_file_path:
             raise HTTPException(status_code=404, detail="Candidate CV is not uploaded")
@@ -207,13 +225,19 @@ class CandidateSelectionService:
         candidate.cv_original_filename = None
         candidate.cv_mime_type = None
         candidate.cv_uploaded_at = None
+        candidate.cv_parse_status = CandidateCVParseStatus.NOT_UPLOADED
+        candidate.cv_parsed_at = None
+        candidate.cv_parse_error = None
+        await db.execute(
+            delete(CandidateCompetency).where(CandidateCompetency.candidate_id == candidate_id)
+        )
         await db.flush()
         try:
             await storage_service.delete_cv(path)
         except Exception:
             pass
         await db.refresh(candidate)
-        return candidate
+        return self._serialize_candidate_summary(candidate, 0)
 
     async def get_candidate_cv_url(
         self, db: AsyncSession, candidate_id: int, user_id: int
@@ -233,34 +257,48 @@ class CandidateSelectionService:
         candidate = await self._get_candidate_orm(db, candidate_id, user_id)
         if not candidate.cv_file_path:
             raise HTTPException(status_code=400, detail="Upload CV before parsing")
-        content = await storage_service.download_cv(candidate.cv_file_path)
-        cv_text = self._extract_text(
-            content=content,
-            filename=candidate.cv_original_filename,
-            content_type=candidate.cv_mime_type,
-        )
-        competency_map = {
-            row.id: row.name
-            for row in (
-                await db.execute(select(Competency.id, Competency.name))
-            ).all()
-        }
-        matched_ids, matched_names, unrecognized = document_processing_service.parse_text(
-            text=cv_text,
-            competency_map=competency_map,
-        )
-        await db.execute(
-            delete(CandidateCompetency).where(CandidateCompetency.candidate_id == candidate_id)
-        )
-        for competency_id in matched_ids:
-            db.add(CandidateCompetency(candidate_id=candidate_id, competency_id=competency_id))
-        await db.flush()
-        return CVParseResponse(
-            candidate_id=candidate_id,
-            matched_competency_ids=matched_ids,
-            matched_competency_names=matched_names,
-            unrecognized_tokens=unrecognized,
-        )
+        candidate.cv_parse_status = CandidateCVParseStatus.PROCESSING
+        candidate.cv_parse_error = None
+        await db.commit()
+
+        try:
+            content = await storage_service.download_cv(candidate.cv_file_path)
+            cv_text = self._extract_text(
+                content=content,
+                filename=candidate.cv_original_filename,
+                content_type=candidate.cv_mime_type,
+            )
+            competency_map = {
+                row.id: row.name
+                for row in (
+                    await db.execute(select(Competency.id, Competency.name))
+                ).all()
+            }
+            matched_ids, matched_names, unrecognized = document_processing_service.parse_text(
+                text=cv_text,
+                competency_map=competency_map,
+            )
+            await db.execute(
+                delete(CandidateCompetency).where(CandidateCompetency.candidate_id == candidate_id)
+            )
+            for competency_id in matched_ids:
+                db.add(CandidateCompetency(candidate_id=candidate_id, competency_id=competency_id))
+            candidate.cv_parse_status = CandidateCVParseStatus.PARSED
+            candidate.cv_parsed_at = datetime.now(timezone.utc)
+            candidate.cv_parse_error = None
+            await db.flush()
+            return CVParseResponse(
+                candidate_id=candidate_id,
+                matched_competency_ids=matched_ids,
+                matched_competency_names=matched_names,
+                unrecognized_tokens=unrecognized,
+            )
+        except HTTPException as exc:
+            await self._persist_candidate_parse_failure(db, candidate_id, user_id, exc.detail)
+            raise
+        except Exception as exc:
+            await self._persist_candidate_parse_failure(db, candidate_id, user_id, str(exc))
+            raise HTTPException(status_code=500, detail="Failed to parse candidate CV") from exc
 
     async def add_candidate_to_selection(
         self, db: AsyncSession, selection_id: int, user_id: int, candidate_id: int
@@ -705,7 +743,7 @@ class CandidateSelectionService:
             .where(Selection.id == selection_id, Selection.user_id == user_id)
             .options(
                 selectinload(Selection.candidates).selectinload(CandidateSelection.candidate),
-                selectinload(Selection.experts),
+                selectinload(Selection.experts).selectinload(SelectionExpert.user),
                 selectinload(Selection.criteria),
                 selectinload(Selection.expert_invites),
             )
@@ -908,7 +946,7 @@ class CandidateSelectionService:
             user_id=selection.user_id,
             model_id=selection.model_id,
             evaluation_deadline=selection.evaluation_deadline,
-            status=selection.status,
+            status_code=selection.status,
             created_at=selection.created_at,
             candidates=[
                 CandidateSelectionOut(
@@ -921,7 +959,7 @@ class CandidateSelectionService:
                 )
                 for item in selection.candidates
             ],
-            experts=[SelectionExpertOut.model_validate(item) for item in selection.experts],
+            experts=[self._serialize_selection_expert(item) for item in selection.experts],
             criteria=[SelectionCriterionOut.model_validate(item) for item in selection.criteria],
             expert_invites=[self._serialize_expert_invite(item) for item in selection.expert_invites],
         )
@@ -937,12 +975,55 @@ class CandidateSelectionService:
             cv_original_filename=candidate.cv_original_filename,
             cv_mime_type=candidate.cv_mime_type,
             cv_uploaded_at=candidate.cv_uploaded_at,
+            cv_parse_status=self._resolve_candidate_cv_parse_status(candidate),
+            cv_parsed_at=candidate.cv_parsed_at,
+            cv_parse_error=candidate.cv_parse_error,
+            matched_competency_count=len(candidate.competencies),
             created_at=candidate.created_at,
             competencies=[
                 CompetencyShort(id=item.competency.id, name=item.competency.name)
                 for item in candidate.competencies
                 if item.competency is not None
             ],
+        )
+
+    def _serialize_candidate_summary(
+        self,
+        candidate: Candidate,
+        matched_competency_count: int | None = None,
+    ) -> CandidateOut:
+        return CandidateOut(
+            id=candidate.id,
+            user_id=candidate.user_id,
+            name=candidate.name,
+            email=candidate.email,
+            profession_id=candidate.profession_id,
+            cv_file_path=candidate.cv_file_path,
+            cv_original_filename=candidate.cv_original_filename,
+            cv_mime_type=candidate.cv_mime_type,
+            cv_uploaded_at=candidate.cv_uploaded_at,
+            cv_parse_status=self._resolve_candidate_cv_parse_status(candidate),
+            cv_parsed_at=candidate.cv_parsed_at,
+            cv_parse_error=candidate.cv_parse_error,
+            matched_competency_count=matched_competency_count or 0,
+            created_at=candidate.created_at,
+        )
+    
+    def _serialize_selection_expert(self, expert: SelectionExpert) -> SelectionExpertDetailOut:
+        return SelectionExpertDetailOut(
+            id=expert.id,
+            selection_id=expert.selection_id,
+            user_id=expert.user_id,
+            weight=float(expert.weight) if expert.weight is not None else None,
+            user=(
+                UserSummaryOut(
+                    id=expert.user.id,
+                    name=expert.user.name,
+                    email=expert.user.email,
+                )
+                if expert.user is not None
+                else None
+            ),
         )
 
     def _serialize_expert_invite(self, invite: SelectionExpertInvite) -> SelectionExpertInviteOut:
@@ -962,6 +1043,27 @@ class CandidateSelectionService:
         if alternative.competency is not None:
             return alternative.competency.name
         raise HTTPException(status_code=400, detail="Alternative has no linked competency")
+
+    def _resolve_candidate_cv_parse_status(self, candidate: Candidate) -> CandidateCVParseStatus:
+        if candidate.cv_parse_status is not None:
+            return CandidateCVParseStatus(candidate.cv_parse_status)
+        if candidate.cv_file_path:
+            return CandidateCVParseStatus.UPLOADED
+        return CandidateCVParseStatus.NOT_UPLOADED
+
+    async def _persist_candidate_parse_failure(
+        self,
+        db: AsyncSession,
+        candidate_id: int,
+        user_id: int,
+        error_message: str,
+    ) -> None:
+        await db.rollback()
+        candidate = await self._get_candidate_orm(db, candidate_id, user_id)
+        candidate.cv_parse_status = CandidateCVParseStatus.FAILED
+        candidate.cv_parsed_at = None
+        candidate.cv_parse_error = error_message[:1000]
+        await db.commit()
 
     def _extract_text(
         self,

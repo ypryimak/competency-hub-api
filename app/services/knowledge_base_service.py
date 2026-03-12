@@ -405,6 +405,31 @@ class KnowledgeBaseService:
             raise HTTPException(status_code=404, detail="Competency not found")
         return obj
 
+    async def get_competency_professions(self, db: AsyncSession, competency_id: int) -> list[dict]:
+        await self.get_competency(db, competency_id)
+        result = await db.execute(
+            select(
+                ProfessionCompetency.profession_id,
+                Profession.name.label("profession_name"),
+                Profession.profession_group_id,
+                ProfessionCompetency.link_type,
+                ProfessionCompetency.weight,
+            )
+            .join(Profession, Profession.id == ProfessionCompetency.profession_id)
+            .where(ProfessionCompetency.competency_id == competency_id)
+            .order_by(Profession.name, ProfessionCompetency.link_type)
+        )
+        return [
+            {
+                "profession_id": row.profession_id,
+                "profession_name": row.profession_name,
+                "profession_group_id": row.profession_group_id,
+                "link_type": row.link_type,
+                "weight": float(row.weight) if row.weight is not None else None,
+            }
+            for row in result.all()
+        ]
+
     async def create_competency(self, db: AsyncSession, data: CompetencyCreate) -> Competency:
         obj = Competency(
             esco_uri=data.esco_uri,

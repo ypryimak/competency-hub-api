@@ -11,6 +11,7 @@ from app.schemas.knowledge_base import (
     CompetencyCollectionMemberCreate,
     CompetencyCollectionMemberOut,
     CompetencyCollectionOut,
+    CompetencyProfessionOut,
     CompetencyCollectionUpdate,
     CompetencyCreate,
     CompetencyGroupCreate,
@@ -326,6 +327,15 @@ async def get_competency(
     _: User = Depends(get_current_user),
 ):
     return await knowledge_base_service.get_competency(db, competency_id)
+
+
+@competencies_router.get("/competencies/{competency_id}/professions", response_model=list[CompetencyProfessionOut])
+async def list_competency_professions(
+    competency_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    return await knowledge_base_service.get_competency_professions(db, competency_id)
 
 
 @competencies_router.get("/competencies/{competency_id}/labels", response_model=list[CompetencyLabelOut])

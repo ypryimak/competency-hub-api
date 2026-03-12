@@ -192,6 +192,10 @@ def main() -> None:
         },
     )
     get(token, f"/professions/{profession['id']}/competencies")
+    linked_professions = get(token, f"/competencies/{competencies[0]['id']}/professions")
+    assert any(item["profession_id"] == profession["id"] for item in linked_professions), (
+        "Expected profession link in competency professions endpoint"
+    )
     similar = get(token, f"/professions/{profession['id']}/similar")
     assert similar, "Expected similar professions for the seeded profession"
     assert any(item["id"] == similar_profession["id"] for item in similar), "Expected related profession in similar list"

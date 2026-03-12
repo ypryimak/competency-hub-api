@@ -41,10 +41,12 @@ from app.schemas.competency_model import (
     ExpertEvaluationStatus,
     ExpertEvaluationSubmit,
     ModelExpertCreate,
+    ModelExpertDetailOut,
     ModelExpertUpdate,
     ModelSubmitRequest,
     OPAResult,
 )
+from app.schemas.common import UserSummaryOut
 from app.services.opa_service import (
     AlternativeInput,
     CriterionInput,
@@ -76,7 +78,7 @@ class CompetencyModelService:
             .where(CompetencyModel.id == model_id, CompetencyModel.user_id == user_id)
             .options(
                 selectinload(CompetencyModel.profession),
-                selectinload(CompetencyModel.experts),
+                selectinload(CompetencyModel.experts).selectinload(ModelExpert.user),
                 selectinload(CompetencyModel.expert_invites),
                 selectinload(CompetencyModel.criteria),
                 selectinload(CompetencyModel.custom_competencies),
@@ -97,9 +99,9 @@ class CompetencyModelService:
             min_competency_weight=model.min_competency_weight,
             max_competency_rank=model.max_competency_rank,
             evaluation_deadline=model.evaluation_deadline,
-            status=model.status,
+            status_code=model.status,
             created_at=model.created_at,
-            experts=model.experts,
+            experts=[self._serialize_model_expert(item) for item in model.experts],
             expert_invites=[
                 ExpertInviteOut(
                     id=invite.id,
@@ -827,7 +829,7 @@ class CompetencyModelService:
             select(CompetencyModel)
             .where(CompetencyModel.id == model_id, CompetencyModel.user_id == user_id)
             .options(
-                selectinload(CompetencyModel.experts),
+                selectinload(CompetencyModel.experts).selectinload(ModelExpert.user),
                 selectinload(CompetencyModel.expert_invites),
                 selectinload(CompetencyModel.criteria),
                 selectinload(CompetencyModel.custom_competencies),
@@ -1045,6 +1047,24 @@ class CompetencyModelService:
             source_type="system",
             weight=alternative.weight,
             final_weight=alternative.final_weight,
+        )
+
+    def _serialize_model_expert(self, expert: ModelExpert) -> ModelExpertDetailOut:
+        return ModelExpertDetailOut(
+            id=expert.id,
+            model_id=expert.model_id,
+            user_id=expert.user_id,
+            rank=expert.rank,
+            weight=float(expert.weight) if expert.weight is not None else None,
+            user=(
+                UserSummaryOut(
+                    id=expert.user.id,
+                    name=expert.user.name,
+                    email=expert.user.email,
+                )
+                if expert.user is not None
+                else None
+            ),
         )
 
     async def _ensure_missing(self, db: AsyncSession, query, detail: str) -> None:

@@ -201,6 +201,19 @@ class CompetencyOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CompetencyProfessionOut(BaseModel):
+    profession_id: int
+    profession_name: str
+    profession_group_id: int
+    link_type: ProfessionCompetencyLinkType = Field(
+        description=(
+            "Valid values: esco_essential, esco_optional, job_derived, manual. "
+            "Indicates how this profession is linked to the competency."
+        )
+    )
+    weight: Optional[float] = None
+
+
 class CompetencyLabelCreate(BaseModel):
     label: str
     label_type: LabelType = Field(

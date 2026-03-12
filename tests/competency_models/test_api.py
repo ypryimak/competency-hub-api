@@ -99,6 +99,8 @@ def main() -> None:
     model_id = model["id"]
     get(hr_token, "/competency-models")
     get(hr_token, f"/competency-models/{model_id}")
+    detail = get(hr_token, f"/competency-models/{model_id}")
+    assert detail["status"] == "draft", "Expected string workflow status in model detail"
     patch(
         hr_token,
         f"/competency-models/{model_id}",
@@ -215,6 +217,7 @@ def main() -> None:
     detail = get(hr_token, f"/competency-models/{model_id}")
     alternative_ids = [item["id"] for item in detail["alternatives"]]
     custom_alternatives = [item for item in detail["alternatives"] if item["source_type"] == "custom"]
+    assert detail["experts"][0]["user"]["id"] == direct_expert_user["id"], "Expected nested expert user in detail"
     assert len(recommendations) >= 2, "Expected recommendations for the model"
     assert len(alternative_ids) >= 2, "Expected default alternatives from profession competencies"
     assert detail["custom_competencies"], "Expected custom competencies in model detail"

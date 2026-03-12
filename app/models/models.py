@@ -684,6 +684,9 @@ class Candidate(Base):
     cv_original_filename: Mapped[Optional[str]] = mapped_column(String)
     cv_mime_type: Mapped[Optional[str]] = mapped_column(String)
     cv_uploaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    cv_parse_status: Mapped[Optional[str]] = mapped_column(String)
+    cv_parsed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    cv_parse_error: Mapped[Optional[str]] = mapped_column(Text)
 
     creator: Mapped["User"] = relationship(back_populates="candidates")
     profession: Mapped["Profession"] = relationship(back_populates="candidates")

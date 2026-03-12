@@ -1,7 +1,10 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import AliasChoices, BaseModel, Field, computed_field, model_validator
+
+from app.core.enums import WorkflowStatusName, get_workflow_status_name
+from app.schemas.common import UserSummaryOut
 
 
 class CompetencyModelCreate(BaseModel):
@@ -22,15 +25,24 @@ class CompetencyModelOut(BaseModel):
     min_competency_weight: Optional[float]
     max_competency_rank: Optional[int]
     evaluation_deadline: Optional[datetime]
-    status: Optional[int]
+    status_code: Optional[int] = Field(
+        default=None,
+        validation_alias=AliasChoices("status_code", "status"),
+        description="Legacy numeric workflow status code.",
+    )
     created_at: datetime
+
+    @computed_field
+    @property
+    def status(self) -> Optional[WorkflowStatusName]:
+        return get_workflow_status_name(self.status_code)
 
     model_config = {"from_attributes": True}
 
 
 class CompetencyModelDetail(CompetencyModelOut):
     profession_name: Optional[str] = None
-    experts: list["ModelExpertOut"] = []
+    experts: list["ModelExpertDetailOut"] = []
     expert_invites: list["ExpertInviteOut"] = []
     criteria: list["CriterionOut"] = []
     custom_competencies: list["CustomCompetencyOut"] = []
@@ -54,6 +66,10 @@ class ModelExpertOut(BaseModel):
     weight: Optional[float]
 
     model_config = {"from_attributes": True, "protected_namespaces": ()}
+
+
+class ModelExpertDetailOut(ModelExpertOut):
+    user: Optional[UserSummaryOut] = None
 
 
 class ExpertInviteCreate(BaseModel):

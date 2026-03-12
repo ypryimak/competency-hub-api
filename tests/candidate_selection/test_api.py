@@ -203,6 +203,7 @@ def main() -> None:
         "/candidates",
         {"name": f"[TEST {marker}] Alice", "email": f"alice_{marker}@example.com", "profession_id": profession["id"]},
     )
+    assert candidate_1["cv_parse_status"] == "not_uploaded", "Expected initial CV parse status"
     candidate_2 = post(
         hr_token,
         "/candidates",
@@ -214,7 +215,8 @@ def main() -> None:
         {"name": f"[TEST {marker}] Carol", "email": f"carol_{marker}@example.com", "profession_id": profession["id"]},
     )
     get(hr_token, "/candidates")
-    get(hr_token, f"/candidates/{candidate_1['id']}")
+    candidate_detail = get(hr_token, f"/candidates/{candidate_1['id']}")
+    assert candidate_detail["matched_competency_count"] == 0, "Expected no parsed competencies before CV parsing"
     post_file(
         hr_token,
         f"/candidates/{candidate_1['id']}/cv",
@@ -298,7 +300,10 @@ def main() -> None:
         f"/selections/{selection_id}/expert-invites",
         {"email": invited_email, "weight": 0.3},
     )
-    get(hr_token, f"/selections/{selection_id}")
+    selection_detail = get(hr_token, f"/selections/{selection_id}")
+    assert selection_detail["experts"][0]["user"]["id"] == direct_expert_user["id"], (
+        "Expected nested expert user in selection detail"
+    )
 
     print("\n[4] Submit selection and accept invite")
     post(hr_token, f"/selections/{selection_id}/submit", expected=200)

@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, field_validator
-from app.core.enums import UserRole
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, computed_field, field_validator
+
+from app.core.enums import UserRoleName, get_user_role_name
 
 
 class UserRegister(BaseModel):
@@ -36,8 +37,17 @@ class UserOut(BaseModel):
     id: int
     name: str
     email: str
-    role: Optional[int]
+    role_code: Optional[int] = Field(
+        default=None,
+        validation_alias=AliasChoices("role_code", "role"),
+        description="Legacy numeric role code.",
+    )
     created_at: datetime
+
+    @computed_field
+    @property
+    def role(self) -> Optional[UserRoleName]:
+        return get_user_role_name(self.role_code)
 
     model_config = {"from_attributes": True}
 
