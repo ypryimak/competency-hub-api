@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,6 @@ from app.core.config import settings
 from app.core.enums import (
     EmailDeliveryStatus,
     EmailTemplateKey,
-    LetterType,
     ModelStatus,
     SelectionStatus,
 )
@@ -42,18 +41,6 @@ SUBJECT_TEMPLATES: dict[EmailTemplateKey, str] = {
     EmailTemplateKey.OWNER_INVITE_ACCEPTED: "{{ expert_name }} accepted the invite for {{ resource_name }}",
     EmailTemplateKey.OWNER_SUBMISSION_RECEIVED: "{{ expert_name }} submitted for {{ resource_name }}",
 }
-
-LEGACY_LETTER_TYPES: dict[EmailTemplateKey, int | None] = {
-    EmailTemplateKey.WELCOME: LetterType.WELCOME,
-    EmailTemplateKey.EXPERT_INVITE: LetterType.EXPERT_INVITE,
-    EmailTemplateKey.EXPERT_DEADLINE_REMINDER: LetterType.EXPERT_REMINDER,
-    EmailTemplateKey.OWNER_DEADLINE_REMINDER: LetterType.DEADLINE_REMINDER,
-    EmailTemplateKey.OWNER_DEADLINE_REACHED_COMPLETED: LetterType.DEADLINE_REACHED,
-    EmailTemplateKey.OWNER_DEADLINE_REACHED_CANCELLED: LetterType.DEADLINE_REACHED,
-    EmailTemplateKey.OWNER_INVITE_ACCEPTED: None,
-    EmailTemplateKey.OWNER_SUBMISSION_RECEIVED: None,
-}
-
 
 @dataclass
 class RenderedEmail:
@@ -203,7 +190,7 @@ class EmailService:
                 "resource_url": settings.frontend_base_url,
                 "owner_name": self._display_name(owner),
                 "deadline": self._format_datetime(model.evaluation_deadline),
-                "assignment_details": f"Assigned rank: {invite.rank}",
+                "assignment_details": None,
                 "app_url": settings.frontend_base_url,
             },
         )
@@ -237,9 +224,7 @@ class EmailService:
                 "resource_url": settings.frontend_base_url,
                 "owner_name": self._display_name(owner),
                 "deadline": self._format_datetime(selection.evaluation_deadline),
-                "assignment_details": (
-                    f"Assigned weight: {float(invite.weight):.2f}" if invite.weight is not None else None
-                ),
+                "assignment_details": None,
                 "app_url": settings.frontend_base_url,
             },
         )
@@ -639,12 +624,9 @@ class EmailService:
                 return existing
 
         normalized_email = to_email.strip().lower()
-        payload = self._serialize_payload(context)
-        subject = template_key.value
 
         try:
             rendered = self._renderer.render(template_key, context)
-            subject = rendered.subject
         except Exception as exc:
             logger.exception("Failed to render email template %s", template_key.value)
             return await self._create_log_entry(
@@ -652,13 +634,11 @@ class EmailService:
                 email=normalized_email,
                 user_id=user_id,
                 template_key=template_key,
-                subject=subject,
                 status=EmailDeliveryStatus.FAILED,
                 error_message=f"Template rendering failed: {exc}",
                 entity_type=entity_type,
                 entity_id=entity_id,
                 dedupe_key=dedupe_key,
-                payload=payload,
             )
 
         log_entry = await self._create_log_entry(
@@ -666,26 +646,22 @@ class EmailService:
             email=normalized_email,
             user_id=user_id,
             template_key=template_key,
-            subject=rendered.subject,
             status=EmailDeliveryStatus.PENDING,
             error_message=None,
             entity_type=entity_type,
             entity_id=entity_id,
             dedupe_key=dedupe_key,
-            payload=payload,
         )
 
         if not settings.EMAILS_ENABLED:
             log_entry.status = EmailDeliveryStatus.SKIPPED.value
             log_entry.error_message = "EMAILS_ENABLED is false"
-            log_entry.last_attempt_at = datetime.now(timezone.utc)
             await db.flush()
             return log_entry
 
         if not settings.EMAIL_FROM:
             log_entry.status = EmailDeliveryStatus.SKIPPED.value
             log_entry.error_message = "EMAIL_FROM is not configured"
-            log_entry.last_attempt_at = datetime.now(timezone.utc)
             await db.flush()
             return log_entry
 
@@ -700,16 +676,13 @@ class EmailService:
             logger.exception("Failed to send email %s to %s", template_key.value, normalized_email)
             log_entry.status = EmailDeliveryStatus.FAILED.value
             log_entry.error_message = str(exc)
-            log_entry.last_attempt_at = datetime.now(timezone.utc)
             await db.flush()
             return log_entry
 
         now = datetime.now(timezone.utc)
         log_entry.status = EmailDeliveryStatus.SENT.value
-        log_entry.provider = result.provider
         log_entry.provider_message_id = result.message_id
         log_entry.sent_at = now
-        log_entry.last_attempt_at = now
         await db.flush()
         return log_entry
 
@@ -720,29 +693,21 @@ class EmailService:
         email: str,
         user_id: int | None,
         template_key: EmailTemplateKey,
-        subject: str,
         status: EmailDeliveryStatus,
         error_message: str | None,
         entity_type: str | None,
         entity_id: int | None,
         dedupe_key: str | None,
-        payload: dict[str, Any],
     ) -> Email:
-        now = datetime.now(timezone.utc)
         entry = Email(
             email=email,
             user_id=user_id,
-            letter_type=LEGACY_LETTER_TYPES.get(template_key),
             template_key=template_key.value,
-            subject=subject,
             status=status.value,
             error_message=error_message,
             dedupe_key=dedupe_key,
             entity_type=entity_type,
             entity_id=entity_id,
-            payload=payload,
-            attempts=1,
-            last_attempt_at=now,
         )
         db.add(entry)
         await db.flush()
@@ -814,9 +779,10 @@ class EmailService:
         selection: Selection,
         model: CompetencyModel | None,
     ) -> str:
+        created_on = self._format_date(selection.created_at)
         if model and model.name and model.name.strip():
-            return f"Candidate selection #{selection.id} ({model.name.strip()})"
-        return f"Candidate selection #{selection.id}"
+            return f"Candidate selection for {model.name.strip()} created on {created_on}"
+        return f"Candidate selection #{selection.id} created on {created_on}"
 
     def _format_datetime(self, value: datetime | None) -> str | None:
         if value is None:
@@ -825,24 +791,17 @@ class EmailService:
             value = value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+    def _format_date(self, value: datetime | None) -> str:
+        if value is None:
+            return "unknown date"
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
     def _deadline_result_status(self, status: int | None) -> str:
         if status in (ModelStatus.COMPLETED, SelectionStatus.COMPLETED):
             return "completed"
         return "cancelled"
-
-    def _serialize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {key: self._serialize_value(value) for key, value in payload.items()}
-
-    def _serialize_value(self, value: Any) -> Any:
-        if isinstance(value, datetime):
-            return self._format_datetime(value)
-        if isinstance(value, timedelta):
-            return value.total_seconds()
-        if isinstance(value, dict):
-            return {key: self._serialize_value(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [self._serialize_value(item) for item in value]
-        return value
 
 
 email_service = EmailService()

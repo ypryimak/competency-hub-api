@@ -26,21 +26,15 @@ CREATE TABLE IF NOT EXISTS emails (
     id                  SERIAL PRIMARY KEY,
     email               VARCHAR NOT NULL,
     user_id             INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    letter_type         INTEGER,
     template_key        VARCHAR NOT NULL,
-    subject             VARCHAR NOT NULL,
     status              VARCHAR NOT NULL,
-    provider            VARCHAR,
     provider_message_id VARCHAR,
     error_message       TEXT,
     dedupe_key          VARCHAR UNIQUE,
     entity_type         VARCHAR,
     entity_id           INTEGER,
-    payload             JSONB,
-    attempts            INTEGER NOT NULL DEFAULT 1,
-    sent_at             TIMESTAMPTZ,
-    last_attempt_at     TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at             TIMESTAMPTZ
 );
 
 -- ============================================================

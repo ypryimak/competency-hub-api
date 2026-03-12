@@ -211,9 +211,6 @@ Notes:
 For a fresh database:
 - run `migrations/schema.sql`
 
-For an existing database that already has `public.emails`:
-- run `migrations/versions/20260312_email_subsystem.sql`
-
 ### 5. Seed the knowledge base
 
 The knowledge base uses two external data sources:

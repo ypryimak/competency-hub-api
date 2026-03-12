@@ -13,7 +13,6 @@ from sqlalchemy import (
     Text,
     Numeric,
     Boolean,
-    JSON,
     ForeignKey,
     DateTime,
     UniqueConstraint,
@@ -58,20 +57,14 @@ class Email(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String, nullable=False)
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("public.users.id"))
-    letter_type: Mapped[Optional[int]] = mapped_column(Integer)
     template_key: Mapped[str] = mapped_column(String, nullable=False)
-    subject: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
-    provider: Mapped[Optional[str]] = mapped_column(String)
     provider_message_id: Mapped[Optional[str]] = mapped_column(String)
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     dedupe_key: Mapped[Optional[str]] = mapped_column(String, unique=True)
     entity_type: Mapped[Optional[str]] = mapped_column(String)
     entity_id: Mapped[Optional[int]] = mapped_column(Integer)
-    payload: Mapped[Optional[dict]] = mapped_column(JSON)
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    last_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

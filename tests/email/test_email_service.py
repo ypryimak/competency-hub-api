@@ -1,8 +1,10 @@
 import httpx
 import pytest
+from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.core.enums import EmailTemplateKey
+from app.models.models import CompetencyModel, Selection
 from app.services.email_service import (
     EmailProviderResult,
     EmailService,
@@ -76,14 +78,14 @@ def test_template_renderer_renders_expert_invite() -> None:
             "resource_url": "http://localhost:3000",
             "owner_name": "Jane Owner",
             "deadline": "2026-03-20 10:00 UTC",
-            "assignment_details": "Assigned rank: 2",
+            "assignment_details": None,
             "app_url": "http://localhost:3000",
         },
     )
 
     assert rendered.subject == "Competency model expert review invitation for Backend Engineer Model"
     assert "Jane Owner invited you" in rendered.text
-    assert "Assigned rank: 2" in rendered.html
+    assert "Assigned rank" not in rendered.html
 
 
 @pytest.mark.asyncio
@@ -183,3 +185,13 @@ async def test_send_email_returns_existing_entry_for_same_dedupe_key() -> None:
     assert db.added == []
     assert db.flush_calls == 0
     assert provider.calls == []
+
+
+def test_format_selection_name_uses_model_name_and_created_date() -> None:
+    service = EmailService(renderer=FakeRenderer(), provider=FakeProvider())
+    selection = Selection(id=42, created_at=datetime(2026, 3, 12, 14, 30, tzinfo=timezone.utc))
+    model = CompetencyModel(name="Senior Backend Engineer Model")
+
+    value = service._format_selection_name(selection, model)
+
+    assert value == "Candidate selection for Senior Backend Engineer Model created on 2026-03-12"
