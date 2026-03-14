@@ -54,6 +54,7 @@ from app.services.opa_service import (
     run_opa,
 )
 from app.services.email_service import email_service
+from app.services.activity_service import activity_service
 
 LINK_TYPE_SCORES = {
     "esco_essential": 2.0,
@@ -472,6 +473,7 @@ class CompetencyModelService:
         model.evaluation_deadline = data.evaluation_deadline
         model.status = ModelStatus.EXPERT_EVALUATION
         await db.flush()
+        await activity_service.log(db, model.user_id, "model", model.id, "status_change", "draft", "expert_evaluation")
         await db.refresh(model)
         return model
 
@@ -527,6 +529,7 @@ class CompetencyModelService:
         invite.accepted_by_user_id = user.id
         await db.flush()
         await db.refresh(expert)
+        await activity_service.log(db, model.user_id, "model", model.id, "invite_accepted", None, user.email)
         await email_service.send_competency_model_invite_accepted(db, invite.model_id, user.id)
         return expert
 
@@ -534,8 +537,10 @@ class CompetencyModelService:
         model = await self._get_model_orm(db, model_id, user_id)
         if model.status in (ModelStatus.COMPLETED, ModelStatus.CANCELLED):
             raise HTTPException(status_code=400, detail="Model is already terminal")
+        old_status = "draft" if model.status == ModelStatus.DRAFT else "expert_evaluation"
         model.status = ModelStatus.CANCELLED
         await db.flush()
+        await activity_service.log(db, model.user_id, "model", model.id, "status_change", old_status, "cancelled")
         await db.refresh(model)
         return model
 
@@ -615,6 +620,7 @@ class CompetencyModelService:
 
         await db.flush()
         if not had_existing_submission:
+            await activity_service.log(db, model.user_id, "model", model_id, "evaluation_submitted", None, str(expert.id))
             await email_service.send_competency_model_submission_received(db, model_id, current_user_id)
         return await self.get_expert_evaluation_status(db, model_id, current_user_id)
 
@@ -682,6 +688,7 @@ class CompetencyModelService:
         if not crit_ranks and not alt_ranks:
             model.status = ModelStatus.CANCELLED
             await db.flush()
+            await activity_service.log(db, model.user_id, "model", model.id, "status_change", "expert_evaluation", "cancelled")
             return OPAResult(
                 expert_weights={},
                 criterion_weights={},
@@ -737,6 +744,7 @@ class CompetencyModelService:
 
         model.status = ModelStatus.COMPLETED
         await db.flush()
+        await activity_service.log(db, model.user_id, "model", model.id, "status_change", "expert_evaluation", "completed")
 
         return OPAResult(
             expert_weights=opa_result.expert_weights,

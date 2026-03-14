@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+from app.schemas.activity import ActivityLogOut
 from app.schemas.auth import UserOut
 from app.schemas.candidate_selection import CandidateOut, SelectionOut
 from app.schemas.competency_model import CompetencyModelOut
@@ -132,3 +133,75 @@ def test_selection_and_candidate_serializers_include_frontend_metadata() -> None
     assert selection_payload["status_code"] == 1
     assert selection_payload["status"] == "draft"
     assert selection_payload["experts"][0]["user"]["email"] == "selection-expert@example.com"
+
+
+def test_user_out_exposes_position_and_company() -> None:
+    user = SimpleNamespace(
+        id=1,
+        name="HR User",
+        email="hr@example.com",
+        role=2,
+        position="Senior HR Manager",
+        company="Acme Corp",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    payload = UserOut.model_validate(user).model_dump(mode="json")
+
+    assert payload["position"] == "Senior HR Manager"
+    assert payload["company"] == "Acme Corp"
+
+
+def test_user_out_position_and_company_default_to_none() -> None:
+    user = SimpleNamespace(
+        id=2,
+        name="No Profile",
+        email="noprofile@example.com",
+        role=2,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    payload = UserOut.model_validate(user).model_dump(mode="json")
+
+    assert payload["position"] is None
+    assert payload["company"] is None
+
+
+def test_activity_log_out_schema() -> None:
+    log = SimpleNamespace(
+        id=1,
+        user_id=5,
+        entity_type="competency_model",
+        entity_id=10,
+        event_type="status_changed",
+        old_value="draft",
+        new_value="expert_evaluation",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    payload = ActivityLogOut.model_validate(log).model_dump(mode="json")
+
+    assert payload["entity_type"] == "competency_model"
+    assert payload["entity_id"] == 10
+    assert payload["event_type"] == "status_changed"
+    assert payload["old_value"] == "draft"
+    assert payload["new_value"] == "expert_evaluation"
+    assert payload["user_id"] == 5
+
+
+def test_activity_log_out_nullable_values() -> None:
+    log = SimpleNamespace(
+        id=2,
+        user_id=3,
+        entity_type="candidate_selection",
+        entity_id=7,
+        event_type="invite_accepted",
+        old_value=None,
+        new_value=None,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    payload = ActivityLogOut.model_validate(log).model_dump(mode="json")
+
+    assert payload["old_value"] is None
+    assert payload["new_value"] is None

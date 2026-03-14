@@ -380,5 +380,9 @@ def main() -> None:
     print("=" * 60)
 
 
+def test_competency_models_api_smoke() -> None:
+    main()
+
+
 if __name__ == "__main__":
     main()

@@ -35,6 +35,8 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    position: Mapped[Optional[str]] = mapped_column(String)
+    company: Mapped[Optional[str]] = mapped_column(String)
 
     emails: Mapped[List["Email"]] = relationship(back_populates="user")
     competency_models: Mapped[List["CompetencyModel"]] = relationship(back_populates="creator")
@@ -48,6 +50,7 @@ class User(Base):
         foreign_keys="SelectionExpertInvite.accepted_by_user_id",
         back_populates="accepted_by_user",
     )
+    activity_logs: Mapped[List["ActivityLog"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Email(Base):
@@ -840,3 +843,37 @@ class CandidateScore(Base):
     candidate: Mapped["Candidate"] = relationship()
     expert: Mapped["SelectionExpert"] = relationship(back_populates="scores")
     selection_criterion: Mapped["SelectionCriterion"] = relationship(back_populates="scores")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("public.users.id"), nullable=False)
+    token: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship()
+
+
+class ActivityLog(Base):
+    __tablename__ = "activity_log"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("public.users.id"), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String, nullable=False)
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    old_value: Mapped[Optional[str]] = mapped_column(String)
+    new_value: Mapped[Optional[str]] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="activity_logs")

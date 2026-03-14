@@ -195,3 +195,19 @@ def test_format_selection_name_uses_model_name_and_created_date() -> None:
     value = service._format_selection_name(selection, model)
 
     assert value == "Candidate selection for Senior Backend Engineer Model created on 2026-03-12"
+
+
+def test_template_renderer_renders_password_reset() -> None:
+    renderer = EmailTemplateRenderer()
+
+    rendered = renderer.render(
+        EmailTemplateKey.PASSWORD_RESET,
+        {
+            "recipient_name": "user@example.com",
+            "reset_url": "http://localhost:3000/reset-password?token=abc123",
+            "app_url": "http://localhost:3000",
+        },
+    )
+
+    assert "Reset" in rendered.subject or "reset" in rendered.subject.lower()
+    assert "reset-password" in rendered.text or "reset" in rendered.text.lower()

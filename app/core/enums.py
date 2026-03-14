@@ -73,6 +73,7 @@ class EmailTemplateKey(str, Enum):
     OWNER_DEADLINE_REACHED_CANCELLED = "owner_deadline_reached_cancelled"
     OWNER_INVITE_ACCEPTED = "owner_invite_accepted"
     OWNER_SUBMISSION_RECEIVED = "owner_submission_received"
+    PASSWORD_RESET = "password_reset"
 
 
 def get_user_role_name(role_code: int | None) -> UserRoleName | None:

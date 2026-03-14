@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS users (
     email         VARCHAR NOT NULL UNIQUE,
     role          INTEGER,
     password_hash VARCHAR,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    position      VARCHAR,
+    company       VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS emails (
@@ -35,6 +37,26 @@ CREATE TABLE IF NOT EXISTS emails (
     entity_id           INTEGER,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     sent_at             TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token      VARCHAR NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at    TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entity_type VARCHAR NOT NULL,
+    entity_id   INTEGER NOT NULL,
+    event_type  VARCHAR NOT NULL,
+    old_value   VARCHAR,
+    new_value   VARCHAR,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ============================================================
@@ -390,6 +412,10 @@ CREATE INDEX IF NOT EXISTS idx_selection_invites_selection
     ON candidate_evaluation.expert_invites(selection_id);
 CREATE INDEX IF NOT EXISTS idx_selection_invites_email
     ON candidate_evaluation.expert_invites(email);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
+    ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_activity_log_user_created
+    ON activity_log(user_id, created_at DESC);
 
 -- ============================================================
 -- ROW LEVEL SECURITY
@@ -397,6 +423,8 @@ CREATE INDEX IF NOT EXISTS idx_selection_invites_email
 
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE emails ENABLE ROW LEVEL SECURITY;
+ALTER TABLE password_reset_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job.profession_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job.professions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job.profession_labels ENABLE ROW LEVEL SECURITY;
@@ -431,6 +459,8 @@ ALTER TABLE candidate_evaluation.candidate_scores ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "service_role_all" ON users FOR ALL TO service_role USING (true);
 CREATE POLICY "service_role_all" ON emails FOR ALL TO service_role USING (true);
+CREATE POLICY "service_role_all" ON password_reset_tokens FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_all" ON activity_log FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "authenticated_read" ON job.profession_groups FOR SELECT TO authenticated USING (true);
 CREATE POLICY "service_role_write" ON job.profession_groups FOR ALL TO service_role USING (true);

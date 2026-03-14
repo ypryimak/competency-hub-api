@@ -8,7 +8,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tests.smoke_common import BASE_URL, auth_headers, delete, ensure_admin, get, patch, post, suffix
+from tests.smoke_common import BASE_URL, auth_headers, delete, ensure_admin, get, ok, patch, post, suffix
 
 
 def main() -> None:
@@ -45,7 +45,22 @@ def main() -> None:
             "profession_group_id": profession_group["id"],
         },
     )
-    get(token, "/professions")
+    professions_page = get(token, "/professions")
+    assert "items" in professions_page and "total" in professions_page, (
+        "GET /professions must return {items, total}"
+    )
+    assert isinstance(professions_page["items"], list)
+    assert isinstance(professions_page["total"], int)
+
+    # pagination params
+    paged = ok(
+        "GET /professions?limit=1&offset=0",
+        requests.get(f"{BASE_URL}/professions?limit=1&offset=0", headers=auth_headers(token)),
+        200,
+    )
+    assert len(paged["items"]) <= 1, "limit=1 must return at most 1 item"
+    assert paged["total"] >= 1, "total must include all items regardless of limit"
+
     get(token, f"/professions/{profession['id']}")
     profession = patch(
         token,
@@ -100,7 +115,21 @@ def main() -> None:
         post(token, "/competencies", {"name": f"[TEST {marker}] Docker", "competency_type": "skill/competence"}),
         post(token, "/competencies", {"name": f"[TEST {marker}] Kubernetes", "competency_type": "skill/competence"}),
     ]
-    get(token, "/competencies")
+    competencies_page = get(token, "/competencies")
+    assert "items" in competencies_page and "total" in competencies_page, (
+        "GET /competencies must return {items, total}"
+    )
+    assert isinstance(competencies_page["items"], list)
+    assert isinstance(competencies_page["total"], int)
+
+    paged_comp = ok(
+        "GET /competencies?limit=1&offset=0",
+        requests.get(f"{BASE_URL}/competencies?limit=1&offset=0", headers=auth_headers(token)),
+        200,
+    )
+    assert len(paged_comp["items"]) <= 1, "limit=1 must return at most 1 item"
+    assert paged_comp["total"] >= 1, "total must include all items regardless of limit"
+
     get(token, f"/competencies/{competencies[0]['id']}")
     patch(
         token,
@@ -281,6 +310,10 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("Knowledge base smoke test passed")
     print("=" * 60)
+
+
+def test_knowledge_base_api_smoke() -> None:
+    main()
 
 
 if __name__ == "__main__":

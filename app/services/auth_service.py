@@ -1,10 +1,12 @@
 import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
-from app.models.models import User
+from app.models.models import User, PasswordResetToken
 from app.core.security import verify_password, get_password_hash, create_access_token, create_refresh_token, decode_token
 from app.core.enums import UserRole
 from app.schemas.auth import UserRegister, UserLogin, TokenResponse, UserUpdate
@@ -84,9 +86,66 @@ class AuthService:
             user.email = data.email
         if data.name is not None:
             user.name = data.name
+        if data.position is not None:
+            user.position = data.position
+        if data.company is not None:
+            user.company = data.company
+        if data.password is not None:
+            if not data.current_password:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Поточний пароль обов'язковий для зміни пароля",
+                )
+            if not user.password_hash or not verify_password(data.current_password, user.password_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Невірний поточний пароль",
+                )
+            user.password_hash = get_password_hash(data.password)
         await db.flush()
         await db.refresh(user)
         return user
+
+    async def forgot_password(self, db: AsyncSession, email: str) -> None:
+        result = await db.execute(select(User).where(User.email == email.lower().strip()))
+        user: Optional[User] = result.scalar_one_or_none()
+        if not user:
+            return  # Silent — prevents email enumeration
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        reset_token = PasswordResetToken(user_id=user.id, token=token, expires_at=expires_at)
+        db.add(reset_token)
+        await db.flush()
+        try:
+            await email_service.send_password_reset_email(db, user.id, token)
+        except Exception:
+            logger.warning("Failed to send password reset email to user %s", user.id)
+
+    async def reset_password(self, db: AsyncSession, token: str, new_password: str) -> None:
+        now = datetime.now(timezone.utc)
+        result = await db.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token == token,
+                PasswordResetToken.used_at.is_(None),
+                PasswordResetToken.expires_at > now,
+            )
+        )
+        reset_token: Optional[PasswordResetToken] = result.scalar_one_or_none()
+        if not reset_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Невалідний або прострочений токен",
+            )
+        result2 = await db.execute(select(User).where(User.id == reset_token.user_id))
+        user: Optional[User] = result2.scalar_one_or_none()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Користувача не знайдено",
+            )
+        user.password_hash = get_password_hash(new_password)
+        reset_token.used_at = now
+        await db.flush()
 
     def _build_tokens(self, user: User) -> TokenResponse:
         payload = {"sub": str(user.id)}

@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    AUTH_REGISTER_RATE_LIMIT: str = "3/minute"
+    AUTH_LOGIN_RATE_LIMIT: str = "10/minute"
+    AUTH_REFRESH_RATE_LIMIT: str = "20/minute"
+    AUTH_FORGOT_PASSWORD_RATE_LIMIT: str = "5/minute"
+    AUTH_RESET_PASSWORD_RATE_LIMIT: str = "5/minute"
 
     # Anthropic
     # App

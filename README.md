@@ -328,14 +328,36 @@ Public URLs:
 
 ## Tests
 
-Smoke tests are plain Python scripts that call the running API.
+Tests include:
+- `pytest` unit/contract tests;
+- API smoke tests that call a running backend instance.
 
-Run them with the server already started:
+Recommended local flow:
 
 ```powershell
-.\.venv\Scripts\python.exe tests\knowledge_base\test_api.py
-.\.venv\Scripts\python.exe tests\competency_models\test_api.py
-.\.venv\Scripts\python.exe tests\candidate_selection\test_api.py
+$env:API_BASE_URL="http://127.0.0.1:8001/api/v1"
+.\.venv\Scripts\pytest.exe -q
+```
+
+If the API runs on the default port, you can omit `API_BASE_URL`.
+
+You can also run the larger smoke suites individually:
+
+```powershell
+$env:API_BASE_URL="http://127.0.0.1:8001/api/v1"
+.\.venv\Scripts\pytest.exe tests\knowledge_base\test_api.py -q
+.\.venv\Scripts\pytest.exe tests\competency_models\test_api.py -q
+.\.venv\Scripts\pytest.exe tests\candidate_selection\test_api.py -q
+```
+
+Useful local auth rate-limit overrides in `.env`:
+
+```powershell
+AUTH_REGISTER_RATE_LIMIT=30/minute
+AUTH_LOGIN_RATE_LIMIT=120/minute
+AUTH_REFRESH_RATE_LIMIT=240/minute
+AUTH_FORGOT_PASSWORD_RATE_LIMIT=60/minute
+AUTH_RESET_PASSWORD_RATE_LIMIT=60/minute
 ```
 
 What they cover:

@@ -40,6 +40,7 @@ SUBJECT_TEMPLATES: dict[EmailTemplateKey, str] = {
     EmailTemplateKey.OWNER_DEADLINE_REACHED_CANCELLED: "{{ resource_name }} was cancelled at deadline",
     EmailTemplateKey.OWNER_INVITE_ACCEPTED: "{{ expert_name }} accepted the invite for {{ resource_name }}",
     EmailTemplateKey.OWNER_SUBMISSION_RECEIVED: "{{ expert_name }} submitted for {{ resource_name }}",
+    EmailTemplateKey.PASSWORD_RESET: "Reset your CompetencyHub password",
 }
 
 @dataclass
@@ -159,6 +160,37 @@ class EmailService:
                 "recipient_name": self._display_name(user),
                 "product_name": settings.PROJECT_NAME,
                 "app_url": settings.frontend_base_url,
+            },
+        )
+
+    async def send_password_reset_email(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        token: str,
+    ) -> None:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            return
+
+        frontend_url = settings.frontend_base_url
+        reset_url: str | None = None
+        if frontend_url:
+            reset_url = f"{frontend_url.rstrip('/')}/reset-password?token={token}"
+
+        await self._send_email(
+            db,
+            template_key=EmailTemplateKey.PASSWORD_RESET,
+            to_email=user.email,
+            user_id=user.id,
+            entity_type=None,
+            entity_id=None,
+            dedupe_key=f"user:{user.id}:password-reset:{token[:16]}",
+            context={
+                "recipient_name": user.name or user.email,
+                "reset_url": reset_url,
+                "app_url": frontend_url,
             },
         )
 

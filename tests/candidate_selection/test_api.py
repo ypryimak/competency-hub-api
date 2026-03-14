@@ -388,5 +388,9 @@ def main() -> None:
     print("=" * 60)
 
 
+def test_candidate_selection_api_smoke() -> None:
+    main()
+
+
 if __name__ == "__main__":
     main()

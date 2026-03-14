@@ -51,6 +51,7 @@ from app.schemas.candidate_selection import (
     VIKORResult,
 )
 from app.schemas.common import UserSummaryOut
+from app.services.activity_service import activity_service
 from app.services.document_processing_service import document_processing_service
 from app.services.email_service import email_service
 from app.services.storage_service import storage_service
@@ -442,6 +443,7 @@ class CandidateSelectionService:
             raise HTTPException(status_code=400, detail="Add at least one expert or invite")
         selection.status = SelectionStatus.EXPERT_EVALUATION
         await db.flush()
+        await activity_service.log(db, selection.user_id, "selection", selection.id, "status_change", "draft", "expert_evaluation")
         await db.refresh(selection)
         return selection
 
@@ -449,8 +451,10 @@ class CandidateSelectionService:
         selection = await self._get_selection_orm(db, selection_id, user_id)
         if selection.status in (SelectionStatus.COMPLETED, SelectionStatus.CANCELLED):
             raise HTTPException(status_code=400, detail="Selection is already terminal")
+        old_status = "draft" if selection.status == SelectionStatus.DRAFT else "expert_evaluation"
         selection.status = SelectionStatus.CANCELLED
         await db.flush()
+        await activity_service.log(db, selection.user_id, "selection", selection.id, "status_change", old_status, "cancelled")
         await db.refresh(selection)
         return selection
 
@@ -504,6 +508,7 @@ class CandidateSelectionService:
             )
         await db.flush()
         if not had_existing_submission:
+            await activity_service.log(db, selection.user_id, "selection", selection_id, "evaluation_submitted", None, str(expert.id))
             await email_service.send_selection_submission_received(db, selection_id, current_user_id)
         return await self.get_expert_scoring_status(db, selection_id, current_user_id)
 
@@ -579,6 +584,7 @@ class CandidateSelectionService:
         invite.accepted_by_user_id = user.id
         await db.flush()
         await db.refresh(expert)
+        await activity_service.log(db, selection.user_id, "selection", selection.id, "invite_accepted", None, user.email)
         await email_service.send_selection_invite_accepted(db, invite.selection_id, user.id)
         return expert
 
@@ -609,6 +615,7 @@ class CandidateSelectionService:
             except HTTPException:
                 selection.status = SelectionStatus.CANCELLED
                 await db.flush()
+                await activity_service.log(db, selection.user_id, "selection", selection.id, "status_change", "expert_evaluation", "cancelled")
                 await db.refresh(selection)
                 return selection
             await self._calculate_vikor_for_selection(db, selection)
@@ -617,6 +624,7 @@ class CandidateSelectionService:
 
         selection.status = SelectionStatus.CANCELLED
         await db.flush()
+        await activity_service.log(db, selection.user_id, "selection", selection.id, "status_change", "expert_evaluation", "cancelled")
         await db.refresh(selection)
         return selection
 
@@ -682,6 +690,7 @@ class CandidateSelectionService:
                 cs.rank = result.rank
         selection.status = SelectionStatus.COMPLETED
         await db.flush()
+        await activity_service.log(db, selection.user_id, "selection", selection.id, "status_change", "expert_evaluation", "completed")
         candidates = {
             item.id: item
             for item in (

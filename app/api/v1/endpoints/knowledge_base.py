@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies import get_current_user, require_admin
@@ -120,12 +120,17 @@ async def delete_profession_group(
     await knowledge_base_service.delete_profession_group(db, group_id)
 
 
-@professions_router.get("/professions", response_model=list[ProfessionOut])
+@professions_router.get("/professions")
 async def list_professions(
+    limit: Optional[int] = Query(None, ge=1, le=10000),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return await knowledge_base_service.get_professions(db)
+    all_items = await knowledge_base_service.get_professions(db)
+    total = len(all_items)
+    sliced = all_items[offset:offset + limit] if limit is not None else (all_items[offset:] if offset else all_items)
+    return {"items": sliced, "total": total}
 
 
 @professions_router.get("/professions/{profession_id}", response_model=ProfessionOut)
@@ -312,12 +317,17 @@ async def delete_competency_group(
     await knowledge_base_service.delete_competency_group(db, group_id)
 
 
-@competencies_router.get("/competencies", response_model=list[CompetencyOut])
+@competencies_router.get("/competencies")
 async def list_competencies(
+    limit: Optional[int] = Query(None, ge=1, le=10000),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return await knowledge_base_service.get_competencies(db)
+    all_items = await knowledge_base_service.get_competencies(db)
+    total = len(all_items)
+    sliced = all_items[offset:offset + limit] if limit is not None else (all_items[offset:] if offset else all_items)
+    return {"items": sliced, "total": total}
 
 
 @competencies_router.get("/competencies/{competency_id}", response_model=CompetencyOut)
