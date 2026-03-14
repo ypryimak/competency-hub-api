@@ -10,7 +10,6 @@ class Settings(BaseSettings):
 
     # Supabase
     SUPABASE_URL: str
-    SUPABASE_ANON_KEY: Optional[str] = None
     SUPABASE_SERVICE_ROLE_KEY: str
     SUPABASE_CV_BUCKET: str = "candidate-cvs"
     CV_SIGNED_URL_EXPIRE_SECONDS: int = 3600
@@ -26,7 +25,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     BACKEND_CORS_ORIGINS: str = ""
     API_V1_PREFIX: str = "/api/v1"
-    PROJECT_NAME: str = "CompetencyHub API"
+    PROJECT_NAME: str = "CompetencyHub"
     BACKGROUND_JOBS_ENABLED: bool = False
     BACKGROUND_JOBS_POLL_SECONDS: int = 60
     JOB_DERIVED_MIN_COUNT: int = 2

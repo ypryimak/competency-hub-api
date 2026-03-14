@@ -175,7 +175,6 @@ Required variables:
 - `SECRET_KEY`
 
 Optional variables:
-- `SUPABASE_ANON_KEY`
 - `SUPABASE_CV_BUCKET`
 - `CV_SIGNED_URL_EXPIRE_SECONDS`
 - `BACKEND_CORS_ORIGINS`

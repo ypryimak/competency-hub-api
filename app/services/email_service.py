@@ -152,8 +152,8 @@ class EmailService:
             template_key=EmailTemplateKey.WELCOME,
             to_email=user.email,
             user_id=user.id,
-            entity_type="user",
-            entity_id=user.id,
+            entity_type=None,
+            entity_id=None,
             dedupe_key=f"user:{user.id}:welcome",
             context={
                 "recipient_name": self._display_name(user),
@@ -503,6 +503,7 @@ class EmailService:
                 "expert_email": expert.email,
                 "resource_name": resource_name,
                 "resource_kind": resource_kind,
+                "action_url": self._resource_url(entity_type, entity_id),
                 "app_url": settings.frontend_base_url,
             },
         )
@@ -534,6 +535,7 @@ class EmailService:
                 "resource_kind": resource_kind,
                 "deadline": self._format_datetime(deadline),
                 "days_before_deadline": days_before_deadline,
+                "action_url": self._resource_url(entity_type, entity_id),
                 "app_url": settings.frontend_base_url,
             },
         )
@@ -567,6 +569,7 @@ class EmailService:
                 "resource_kind": resource_kind,
                 "deadline": self._format_datetime(deadline),
                 "days_before_deadline": days_before_deadline,
+                "action_url": self._resource_url(entity_type, entity_id),
                 "app_url": settings.frontend_base_url,
             },
         )
@@ -600,6 +603,7 @@ class EmailService:
                 "resource_name": resource_name,
                 "resource_kind": resource_kind,
                 "status_label": status_label,
+                "action_url": self._resource_url(entity_type, entity_id),
                 "app_url": settings.frontend_base_url,
             },
         )
@@ -797,6 +801,16 @@ class EmailService:
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+    def _resource_url(self, entity_type: str, entity_id: int) -> str | None:
+        base = settings.frontend_base_url
+        if not base:
+            return None
+        if entity_type == "competency_model":
+            return f"{base.rstrip('/')}/competency-models/{entity_id}"
+        if entity_type == "selection":
+            return f"{base.rstrip('/')}/candidate-selections/{entity_id}"
+        return None
 
     def _deadline_result_status(self, status: int | None) -> str:
         if status in (ModelStatus.COMPLETED, SelectionStatus.COMPLETED):

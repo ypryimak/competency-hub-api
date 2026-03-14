@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import AliasChoices, BaseModel, EmailStr, Field, computed_field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.core.enums import UserRoleName, get_user_role_name
 
@@ -15,6 +15,10 @@ class UserRegister(BaseModel):
     def password_strength(cls, v: str) -> str:
         if len(v) < 8:
             raise ValueError("Пароль має містити щонайменше 8 символів")
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Пароль має містити щонайменше одну літеру")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Пароль має містити щонайменше одну цифру")
         return v
 
 
@@ -37,17 +41,15 @@ class UserOut(BaseModel):
     id: int
     name: str
     email: str
-    role_code: Optional[int] = Field(
-        default=None,
-        validation_alias=AliasChoices("role_code", "role"),
-        description="Legacy numeric role code.",
-    )
+    role: Optional[UserRoleName] = None
     created_at: datetime
 
-    @computed_field
-    @property
-    def role(self) -> Optional[UserRoleName]:
-        return get_user_role_name(self.role_code)
+    @field_validator("role", mode="before")
+    @classmethod
+    def coerce_role(cls, v) -> Optional[UserRoleName]:
+        if isinstance(v, int):
+            return get_user_role_name(v)
+        return v
 
     model_config = {"from_attributes": True}
 

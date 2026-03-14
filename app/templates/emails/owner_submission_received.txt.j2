@@ -1,7 +1,10 @@
 Hello {{ recipient_name }},
 
 {{ expert_name }} ({{ expert_email }}) submitted their work for your {{ resource_kind }} "{{ resource_name }}".
-{% if app_url %}
+{% if action_url %}
+
+View in CompetencyHub: {{ action_url }}
+{% elif app_url %}
 
 Open CompetencyHub: {{ app_url }}
 {% endif %}

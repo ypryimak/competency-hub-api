@@ -141,12 +141,31 @@ class CompetencyModelService:
         self, db: AsyncSession, model_id: int, user_id: int, data: CompetencyModelUpdate
     ) -> CompetencyModel:
         model = await self._get_model_orm(db, model_id, user_id)
-        self._require_status(model, ModelStatus.DRAFT)
-        if data.name is not None:
-            model.name = data.name
-        if data.profession_id is not None:
-            await self._ensure_profession_exists(db, data.profession_id)
-            model.profession_id = data.profession_id
+        allowed_statuses = {ModelStatus.DRAFT, ModelStatus.EXPERT_EVALUATION, ModelStatus.COMPLETED}
+        if model.status not in allowed_statuses:
+            raise HTTPException(status_code=400, detail="Model cannot be updated in its current status")
+
+        is_draft = model.status == ModelStatus.DRAFT
+        is_expert_eval = model.status == ModelStatus.EXPERT_EVALUATION
+        is_completed = model.status == ModelStatus.COMPLETED
+
+        if is_draft:
+            if data.name is not None:
+                model.name = data.name
+            if data.profession_id is not None:
+                await self._ensure_profession_exists(db, data.profession_id)
+                model.profession_id = data.profession_id
+
+        if is_draft or is_expert_eval:
+            if data.evaluation_deadline is not None:
+                model.evaluation_deadline = data.evaluation_deadline
+
+        if is_draft or is_expert_eval or is_completed:
+            if data.min_competency_weight is not None:
+                model.min_competency_weight = data.min_competency_weight
+            if data.max_competency_rank is not None:
+                model.max_competency_rank = data.max_competency_rank
+
         await db.flush()
         await db.refresh(model)
         return model
@@ -275,7 +294,7 @@ class CompetencyModelService:
     ) -> Criterion:
         model = await self._get_model_orm(db, model_id, user_id)
         self._require_status(model, ModelStatus.DRAFT)
-        criterion = Criterion(model_id=model_id, name=data.name)
+        criterion = Criterion(model_id=model_id, name=data.name, description=data.description)
         db.add(criterion)
         await db.flush()
         await db.refresh(criterion)
@@ -289,6 +308,8 @@ class CompetencyModelService:
         criterion = await self._get_criterion(db, criterion_id, model_id)
         if data.name is not None:
             criterion.name = data.name
+        if data.description is not None:
+            criterion.description = data.description
         await db.flush()
         await db.refresh(criterion)
         return criterion

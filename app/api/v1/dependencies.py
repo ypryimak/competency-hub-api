@@ -27,7 +27,15 @@ async def get_current_user(
         )
 
     user_id = payload.get("sub")
-    result = await db.execute(select(User).where(User.id == int(user_id)))
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалідний або протермінований токен",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    result = await db.execute(select(User).where(User.id == uid))
     user: Optional[User] = result.scalar_one_or_none()
 
     if not user:

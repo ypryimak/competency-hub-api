@@ -1,7 +1,10 @@
 Hello {{ recipient_name }},
 
 Your {{ resource_kind }} "{{ resource_name }}" reached its deadline and was completed automatically.
-{% if app_url %}
+{% if action_url %}
+
+View in CompetencyHub: {{ action_url }}
+{% elif app_url %}
 
 Open CompetencyHub: {{ app_url }}
 {% endif %}

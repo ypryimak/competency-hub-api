@@ -517,6 +517,7 @@ class Criterion(Base):
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
     weight: Mapped[Optional[float]] = mapped_column(Numeric)
 
     model: Mapped["CompetencyModel"] = relationship(back_populates="criteria")

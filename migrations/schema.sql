@@ -200,10 +200,11 @@ CREATE TABLE IF NOT EXISTS competency_model.expert_invites (
 );
 
 CREATE TABLE IF NOT EXISTS competency_model.criteria (
-    id       SERIAL PRIMARY KEY,
-    model_id INTEGER NOT NULL REFERENCES competency_model.models(id) ON DELETE CASCADE,
-    name     VARCHAR NOT NULL,
-    weight   NUMERIC
+    id          SERIAL PRIMARY KEY,
+    model_id    INTEGER NOT NULL REFERENCES competency_model.models(id) ON DELETE CASCADE,
+    name        VARCHAR NOT NULL,
+    description TEXT,
+    weight      NUMERIC
 );
 
 CREATE TABLE IF NOT EXISTS competency_model.custom_competencies (

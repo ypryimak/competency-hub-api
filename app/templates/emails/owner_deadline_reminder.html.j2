@@ -5,7 +5,9 @@
     {% if deadline %}
     <p>Deadline: {{ deadline }}</p>
     {% endif %}
-    {% if app_url %}
+    {% if action_url %}
+    <p><a href="{{ action_url }}">View in CompetencyHub</a></p>
+    {% elif app_url %}
     <p><a href="{{ app_url }}">Open CompetencyHub</a></p>
     {% endif %}
   </body>

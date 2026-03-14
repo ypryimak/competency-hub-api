@@ -5,7 +5,10 @@ This is a reminder that {{ resource_kind }} "{{ resource_name }}" is due in {{ d
 Deadline: {{ deadline }}
 {% endif %}
 Owner: {{ owner_name }}
-{% if app_url %}
+{% if action_url %}
+
+View in CompetencyHub: {{ action_url }}
+{% elif app_url %}
 
 Open CompetencyHub: {{ app_url }}
 {% endif %}

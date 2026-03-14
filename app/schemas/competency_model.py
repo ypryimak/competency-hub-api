@@ -15,6 +15,9 @@ class CompetencyModelCreate(BaseModel):
 class CompetencyModelUpdate(BaseModel):
     name: Optional[str] = None
     profession_id: Optional[int] = None
+    evaluation_deadline: Optional[datetime] = None
+    min_competency_weight: Optional[float] = None
+    max_competency_rank: Optional[int] = None
 
 
 class CompetencyModelOut(BaseModel):
@@ -98,16 +101,19 @@ class ExpertInviteOut(BaseModel):
 
 class CriterionCreate(BaseModel):
     name: str
+    description: Optional[str] = None
 
 
 class CriterionUpdate(BaseModel):
     name: Optional[str] = None
+    description: Optional[str] = None
 
 
 class CriterionOut(BaseModel):
     id: int
     model_id: int
     name: str
+    description: Optional[str] = None
     weight: Optional[float]
 
     model_config = {"from_attributes": True, "protected_namespaces": ()}

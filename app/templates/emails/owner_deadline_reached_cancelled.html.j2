@@ -2,7 +2,9 @@
   <body style="font-family: Arial, sans-serif; color: #1f2937;">
     <p>Hello {{ recipient_name }},</p>
     <p>Your {{ resource_kind }} <strong>{{ resource_name }}</strong> reached its deadline and was cancelled because the required expert input was not complete.</p>
-    {% if app_url %}
+    {% if action_url %}
+    <p><a href="{{ action_url }}">View in CompetencyHub</a></p>
+    {% elif app_url %}
     <p><a href="{{ app_url }}">Open CompetencyHub</a></p>
     {% endif %}
   </body>

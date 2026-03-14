@@ -1,11 +1,23 @@
+import logging
+import logging.config
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.api.v1.router import api_router
 from app.api.v1.openapi_metadata import apply_openapi_metadata
 from app.services.background_jobs import background_job_runner
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 APP_DESCRIPTION = """
 Backend for competency models, expert evaluation, and candidate selection.
@@ -54,10 +66,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 apply_openapi_metadata(app)
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled error on %s %s", request.method, request.url)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "environment": settings.ENVIRONMENT}
+    return {"status": "ok"}
