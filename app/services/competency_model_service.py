@@ -92,6 +92,22 @@ class CompetencyModelService:
         if not model:
             raise HTTPException(status_code=404, detail="Competency model not found")
 
+        invite_users = await self._get_users_by_emails(
+            db,
+            [invite.email for invite in model.expert_invites if invite.accepted_by_user_id is None],
+        )
+        pending_invites = [
+            self._serialize_expert_invite(
+                invite,
+                model_name=model.name,
+                profession_id=model.profession_id,
+                status="added" if model.status == ModelStatus.DRAFT else "invited",
+                matched_user=invite_users.get(invite.email.strip().lower()),
+            )
+            for invite in model.expert_invites
+            if invite.accepted_by_user_id is None
+        ]
+
         return CompetencyModelDetail(
             id=model.id,
             user_id=model.user_id,
@@ -104,20 +120,7 @@ class CompetencyModelService:
             status_code=model.status,
             created_at=model.created_at,
             experts=[self._serialize_model_expert(item) for item in model.experts],
-            expert_invites=[
-                ExpertInviteOut(
-                    id=invite.id,
-                    model_id=invite.model_id,
-                    email=invite.email,
-                    rank=invite.rank,
-                    token=invite.token,
-                    accepted_by_user_id=invite.accepted_by_user_id,
-                    created_at=invite.created_at,
-                    model_name=model.name,
-                    profession_id=model.profession_id,
-                )
-                for invite in model.expert_invites
-            ],
+            expert_invites=pending_invites,
             criteria=model.criteria,
             custom_competencies=[CustomCompetencyOut.model_validate(item) for item in model.custom_competencies],
             alternatives=[self._serialize_alternative(alt) for alt in model.alternatives],
@@ -202,25 +205,22 @@ class CompetencyModelService:
             .where(ExpertInvite.model_id == model_id)
             .order_by(ExpertInvite.created_at, ExpertInvite.id)
         )
-        invites = result.scalars().all()
+        invites = [invite for invite in result.scalars().all() if invite.accepted_by_user_id is None]
+        matched_users = await self._get_users_by_emails(db, [invite.email for invite in invites])
         return [
-            ExpertInviteOut(
-                id=invite.id,
-                model_id=invite.model_id,
-                email=invite.email,
-                rank=invite.rank,
-                token=invite.token,
-                accepted_by_user_id=invite.accepted_by_user_id,
-                created_at=invite.created_at,
+            self._serialize_expert_invite(
+                invite,
                 model_name=model.name,
                 profession_id=model.profession_id,
+                status="added" if model.status == ModelStatus.DRAFT else "invited",
+                matched_user=matched_users.get(invite.email.strip().lower()),
             )
             for invite in invites
         ]
 
     async def create_expert_invite(
         self, db: AsyncSession, model_id: int, user_id: int, data: ExpertInviteCreate
-    ) -> ExpertInvite:
+    ) -> ExpertInviteOut:
         model = await self._get_model_orm(db, model_id, user_id)
         self._require_status(model, ModelStatus.DRAFT)
         normalized_email = data.email.strip().lower()
@@ -236,8 +236,14 @@ class CompetencyModelService:
         db.add(invite)
         await db.flush()
         await db.refresh(invite)
-        await email_service.send_competency_model_invite(db, invite.id)
-        return invite
+        matched_user = (await self._get_users_by_emails(db, [normalized_email])).get(normalized_email)
+        return self._serialize_expert_invite(
+            invite,
+            model_name=model.name,
+            profession_id=model.profession_id,
+            status="added",
+            matched_user=matched_user,
+        )
 
     async def update_expert_invite(
         self,
@@ -246,7 +252,7 @@ class CompetencyModelService:
         invite_id: int,
         user_id: int,
         data: ExpertInviteUpdate,
-    ) -> ExpertInvite:
+    ) -> ExpertInviteOut:
         model = await self._get_model_orm(db, model_id, user_id)
         self._require_status(model, ModelStatus.DRAFT)
         invite = await self._get_expert_invite(db, invite_id, model_id)
@@ -263,7 +269,14 @@ class CompetencyModelService:
             invite.rank = data.rank
         await db.flush()
         await db.refresh(invite)
-        return invite
+        matched_user = (await self._get_users_by_emails(db, [invite.email])).get(invite.email.strip().lower())
+        return self._serialize_expert_invite(
+            invite,
+            model_name=model.name,
+            profession_id=model.profession_id,
+            status="added",
+            matched_user=matched_user,
+        )
 
     async def delete_expert_invite(
         self, db: AsyncSession, model_id: int, invite_id: int, user_id: int
@@ -496,15 +509,10 @@ class CompetencyModelService:
     ) -> CompetencyModel:
         model = await self._get_model_orm(db, model_id, user_id)
         self._require_status(model, ModelStatus.DRAFT)
-        invite_count = (
-            await db.execute(
-                select(func.count(ExpertInvite.id)).where(
-                    ExpertInvite.model_id == model_id,
-                    ExpertInvite.accepted_by_user_id.is_(None),
-                )
-            )
-        ).scalar_one()
-        if not model.experts and not invite_count:
+        pending_invites = [
+            invite for invite in model.expert_invites if invite.accepted_by_user_id is None
+        ]
+        if not model.experts and not pending_invites:
             raise HTTPException(status_code=400, detail="Add at least one expert or invite")
         if not model.criteria:
             raise HTTPException(status_code=400, detail="Add at least one criterion")
@@ -516,6 +524,8 @@ class CompetencyModelService:
         model.status = ModelStatus.EXPERT_EVALUATION
         await db.flush()
         await activity_service.log(db, model.user_id, "model", model.id, "status_change", "draft", "expert_evaluation")
+        for invite in pending_invites:
+            await email_service.send_competency_model_invite(db, invite.id)
         await db.refresh(model)
         return model
 
@@ -535,16 +545,12 @@ class CompetencyModelService:
             .order_by(ExpertInvite.created_at.desc())
         )
         return [
-            ExpertInviteOut(
-                id=invite.id,
-                model_id=invite.model_id,
-                email=invite.email,
-                rank=invite.rank,
-                token=invite.token,
-                accepted_by_user_id=invite.accepted_by_user_id,
-                created_at=invite.created_at,
+            self._serialize_expert_invite(
+                invite,
                 model_name=model.name,
                 profession_id=model.profession_id,
+                status="invited",
+                matched_user=user,
             )
             for invite, model in result.all()
         ]
@@ -564,6 +570,8 @@ class CompetencyModelService:
             raise HTTPException(status_code=400, detail="Model has been cancelled")
         if model.status == ModelStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="Model is already completed")
+        if model.status != ModelStatus.EXPERT_EVALUATION:
+            raise HTTPException(status_code=400, detail="Invite is not active yet")
         await self._ensure_user_not_already_expert(db, invite.model_id, user.id)
         await self._check_expert_rank_unique(db, invite.model_id, invite.rank, exclude_invite_id=invite.id)
         expert = ModelExpert(model_id=invite.model_id, user_id=user.id, rank=invite.rank)
@@ -1134,6 +1142,48 @@ class CompetencyModelService:
                 else None
             ),
         )
+
+    def _serialize_expert_invite(
+        self,
+        invite: ExpertInvite,
+        *,
+        model_name: str | None,
+        profession_id: int | None,
+        status: str,
+        matched_user: User | None,
+    ) -> ExpertInviteOut:
+        return ExpertInviteOut(
+            id=invite.id,
+            model_id=invite.model_id,
+            email=invite.email,
+            rank=invite.rank,
+            token=invite.token,
+            accepted_by_user_id=invite.accepted_by_user_id,
+            created_at=invite.created_at,
+            model_name=model_name,
+            profession_id=profession_id,
+            status=status,
+            user=(
+                UserSummaryOut(
+                    id=matched_user.id,
+                    name=matched_user.name,
+                    email=matched_user.email,
+                )
+                if matched_user is not None
+                else None
+            ),
+        )
+
+    async def _get_users_by_emails(self, db: AsyncSession, emails: list[str]) -> dict[str, User]:
+        normalized_emails = sorted({email.strip().lower() for email in emails if email})
+        if not normalized_emails:
+            return {}
+        rows = (
+            await db.execute(
+                select(User).where(func.lower(User.email).in_(normalized_emails))
+            )
+        ).scalars().all()
+        return {user.email.strip().lower(): user for user in rows}
 
     async def _ensure_missing(self, db: AsyncSession, query, detail: str) -> None:
         result = await db.execute(query)

@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlencode
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -6,7 +7,7 @@ from typing import Any
 
 import httpx
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -206,6 +207,7 @@ class EmailService:
         if not row:
             return None
         invite, model, owner = row
+        invite_url = await self._invite_landing_url(db, invite.email)
         return await self._send_email(
             db,
             template_key=EmailTemplateKey.EXPERT_INVITE,
@@ -219,7 +221,7 @@ class EmailService:
                 "workflow_label": "Competency model expert review",
                 "resource_kind": "competency model",
                 "resource_name": self._format_model_name(model),
-                "resource_url": settings.frontend_base_url,
+                "resource_url": invite_url,
                 "owner_name": self._display_name(owner),
                 "deadline": self._format_datetime(model.evaluation_deadline),
                 "assignment_details": None,
@@ -240,6 +242,7 @@ class EmailService:
         if not row:
             return None
         invite, selection, owner, model = row
+        invite_url = await self._invite_landing_url(db, invite.email)
         return await self._send_email(
             db,
             template_key=EmailTemplateKey.EXPERT_INVITE,
@@ -253,7 +256,7 @@ class EmailService:
                 "workflow_label": "Candidate selection expert review",
                 "resource_kind": "candidate selection",
                 "resource_name": self._format_selection_name(selection, model),
-                "resource_url": settings.frontend_base_url,
+                "resource_url": invite_url,
                 "owner_name": self._display_name(owner),
                 "deadline": self._format_datetime(selection.evaluation_deadline),
                 "assignment_details": None,
@@ -843,6 +846,27 @@ class EmailService:
         if entity_type == "selection":
             return f"{base.rstrip('/')}/candidate-selections/{entity_id}"
         return None
+
+    async def _invite_landing_url(self, db: AsyncSession, email: str) -> str | None:
+        base = settings.frontend_base_url
+        if not base:
+            return None
+
+        normalized_email = email.strip().lower()
+        existing_user = (
+            await db.execute(
+                select(User.id).where(func.lower(User.email) == normalized_email)
+            )
+        ).scalar_one_or_none()
+        mode = "login" if existing_user is not None else "register"
+        query = urlencode(
+            {
+                "mode": mode,
+                "email": normalized_email,
+                "next": "/expert-workspace",
+            }
+        )
+        return f"{base.rstrip('/')}/login?{query}"
 
     def _deadline_result_status(self, status: int | None) -> str:
         if status in (ModelStatus.COMPLETED, SelectionStatus.COMPLETED):

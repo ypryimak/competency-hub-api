@@ -17,6 +17,8 @@ class UserRegister(BaseModel):
     name: str
     email: EmailStr
     password: str
+    position: Optional[str] = None
+    company: Optional[str] = None
 
     @field_validator("password")
     @classmethod

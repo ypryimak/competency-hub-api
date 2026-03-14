@@ -35,6 +35,8 @@ class AuthService:
             email=data.email,
             password_hash=get_password_hash(data.password),
             role=UserRole.USER,
+            position=data.position,
+            company=data.company,
         )
         db.add(user)
         await db.flush()

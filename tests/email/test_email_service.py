@@ -1,6 +1,9 @@
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
-from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.core.enums import EmailTemplateKey
@@ -211,3 +214,29 @@ def test_template_renderer_renders_password_reset() -> None:
 
     assert "Reset" in rendered.subject or "reset" in rendered.subject.lower()
     assert "reset-password" in rendered.text or "reset" in rendered.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_invite_landing_url_uses_register_for_new_user() -> None:
+    service = EmailService(renderer=FakeRenderer(), provider=FakeProvider())
+    db = SimpleNamespace(execute=AsyncMock(return_value=FakeResult(scalar=None)))
+
+    url = await service._invite_landing_url(db, "New.Expert@example.com")
+
+    assert url == (
+        f"{settings.frontend_base_url.rstrip('/')}"
+        "/login?mode=register&email=new.expert%40example.com&next=%2Fexpert-workspace"
+    )
+
+
+@pytest.mark.asyncio
+async def test_invite_landing_url_uses_login_for_existing_user() -> None:
+    service = EmailService(renderer=FakeRenderer(), provider=FakeProvider())
+    db = SimpleNamespace(execute=AsyncMock(return_value=FakeResult(scalar=123)))
+
+    url = await service._invite_landing_url(db, "expert@example.com")
+
+    assert url == (
+        f"{settings.frontend_base_url.rstrip('/')}"
+        "/login?mode=login&email=expert%40example.com&next=%2Fexpert-workspace"
+    )

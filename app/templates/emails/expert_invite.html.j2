@@ -15,10 +15,10 @@
     <p style="color: #475569; margin: 0; font-size: 14px;"><strong>Deadline:</strong> {{ deadline }}</p>
   </div>
   {% endif %}
-  <p style="color: #475569;">Sign in with this email address to accept the invite.</p>
-  {% if app_url %}
+  <p style="color: #475569;">Use this email address to sign in or create your account and accept the invite.</p>
+  {% if resource_url or app_url %}
   <p style="margin: 24px 0;">
-    <a href="{{ app_url }}" style="display: inline-block; background: #4f46e5; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open CompetencyHub</a>
+    <a href="{{ resource_url or app_url }}" style="display: inline-block; background: #4f46e5; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open Invitation</a>
   </p>
   {% endif %}
   <p style="color: #64748b; font-size: 13px; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">If you were not expecting this invitation, you can safely ignore this email.</p>

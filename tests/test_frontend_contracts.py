@@ -4,14 +4,23 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from app.core.enums import ModelStatus
 from app.schemas.activity import ActivityLogOut
-from app.schemas.auth import UserOut
+from app.schemas.auth import UserOut, UserRegister
 from app.schemas.candidate_selection import CandidateOut, SelectionOut
-from app.schemas.competency_model import CompetencyModelOut, CompetencyModelUpdate
+from app.schemas.competency_model import (
+    CompetencyModelOut,
+    CompetencyModelUpdate,
+    ExpertInviteCreate,
+    ModelSubmitRequest,
+)
+from app.services.auth_service import AuthService
 from app.services.candidate_selection_service import CandidateSelectionService
 from app.services.competency_model_service import CompetencyModelService
+from app.services.email_service import email_service
+from app.services.activity_service import activity_service
 
 
 def test_user_out_exposes_role_code_and_string_role() -> None:
@@ -237,3 +246,145 @@ async def test_update_model_allows_clearing_competency_filters() -> None:
     assert model.max_competency_rank is None
     db.flush.assert_awaited_once()
     db.refresh.assert_awaited_once_with(model)
+
+
+@pytest.mark.asyncio
+async def test_auth_register_persists_company_and_position(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = AuthService()
+    added: list[object] = []
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+        add=added.append,
+        flush=AsyncMock(),
+        refresh=AsyncMock(),
+    )
+    send_welcome_email = AsyncMock()
+    monkeypatch.setattr(email_service, "send_welcome_email", send_welcome_email)
+
+    user = await service.register(
+        db,
+        UserRegister(
+            name="Jane Recruiter",
+            email="jane@example.com",
+            password="Password1",
+            company="Acme Corp",
+            position="HR Lead",
+        ),
+    )
+
+    assert added
+    assert user.company == "Acme Corp"
+    assert user.position == "HR Lead"
+    send_welcome_email.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_expert_invite_stays_added_until_submit(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = CompetencyModelService()
+    model = SimpleNamespace(
+        id=12,
+        name="Backend Engineer",
+        profession_id=4,
+        status=ModelStatus.DRAFT,
+    )
+    captured_invites: list[object] = []
+
+    async def refresh(invite: object) -> None:
+        invite.id = 42
+        invite.created_at = datetime.now(timezone.utc)
+
+    db = SimpleNamespace(
+        add=captured_invites.append,
+        flush=AsyncMock(),
+        refresh=AsyncMock(side_effect=refresh),
+    )
+    service._get_model_orm = AsyncMock(return_value=model)
+    service._ensure_invite_email_missing = AsyncMock()
+    service._ensure_email_not_already_expert = AsyncMock()
+    service._check_expert_rank_unique = AsyncMock()
+    service._get_users_by_emails = AsyncMock(
+        return_value={
+            "expert@example.com": SimpleNamespace(
+                id=9,
+                name="Existing Expert",
+                email="expert@example.com",
+            )
+        }
+    )
+    send_invite = AsyncMock()
+    monkeypatch.setattr(email_service, "send_competency_model_invite", send_invite)
+
+    payload = await service.create_expert_invite(
+        db,
+        12,
+        3,
+        ExpertInviteCreate(email="Expert@example.com", rank=2),
+    )
+
+    assert captured_invites
+    assert payload.status == "added"
+    assert payload.email == "expert@example.com"
+    assert payload.user is not None
+    assert payload.user.name == "Existing Expert"
+    send_invite.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_model_sends_pending_invites(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = CompetencyModelService()
+    pending_invite = SimpleNamespace(id=51, accepted_by_user_id=None)
+    model = SimpleNamespace(
+        id=11,
+        user_id=7,
+        status=ModelStatus.DRAFT,
+        experts=[],
+        expert_invites=[pending_invite],
+        criteria=[SimpleNamespace(id=1)],
+        alternatives=[SimpleNamespace(id=1), SimpleNamespace(id=2)],
+        min_competency_weight=None,
+        max_competency_rank=None,
+        evaluation_deadline=None,
+    )
+    db = SimpleNamespace(flush=AsyncMock(), refresh=AsyncMock())
+    service._get_model_orm = AsyncMock(return_value=model)
+    log_activity = AsyncMock()
+    send_invite = AsyncMock()
+    monkeypatch.setattr(activity_service, "log", log_activity)
+    monkeypatch.setattr(email_service, "send_competency_model_invite", send_invite)
+
+    await service.submit_model(
+        db,
+        11,
+        7,
+        ModelSubmitRequest(
+            min_competency_weight=0.5,
+            evaluation_deadline=datetime.now(timezone.utc),
+        ),
+    )
+
+    assert model.status == ModelStatus.EXPERT_EVALUATION
+    send_invite.assert_awaited_once_with(db, 51)
+    log_activity.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_accept_expert_invite_rejects_inactive_model() -> None:
+    service = CompetencyModelService()
+    user = SimpleNamespace(id=7, email="expert@example.com")
+    invite = SimpleNamespace(
+        id=3,
+        model_id=10,
+        email="expert@example.com",
+        accepted_by_user_id=None,
+        rank=1,
+    )
+    service._get_user = AsyncMock(return_value=user)
+    service._get_expert_invite_by_token = AsyncMock(return_value=invite)
+    service._get_model_for_status_check = AsyncMock(
+        return_value=SimpleNamespace(id=10, user_id=2, status=ModelStatus.DRAFT)
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.accept_expert_invite(SimpleNamespace(), "token", 7)
+
+    assert exc_info.value.detail == "Invite is not active yet"

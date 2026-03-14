@@ -10,7 +10,7 @@ Hello {{ recipient_name }},
 Deadline: {{ deadline }}
 {% endif %}
 
-Sign in with this email address to see and accept the invite.
-{% if app_url %}
-Open CompetencyHub: {{ app_url }}
+Use this email address to sign in or create your account and accept the invite.
+{% if resource_url or app_url %}
+Open invitation: {{ resource_url or app_url }}
 {% endif %}
