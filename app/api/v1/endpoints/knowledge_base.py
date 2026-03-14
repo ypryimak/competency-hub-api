@@ -128,13 +128,19 @@ async def delete_profession_group(
 async def list_professions(
     limit: Optional[int] = Query(None, ge=1, le=10000),
     offset: int = Query(0, ge=0),
+    search: Optional[str] = Query(None),
+    group_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    all_items = await knowledge_base_service.get_professions(db)
-    total = len(all_items)
-    sliced = all_items[offset:offset + limit] if limit is not None else (all_items[offset:] if offset else all_items)
-    return {"items": [ProfessionListOut(**item) for item in sliced], "total": total}
+    items, total = await knowledge_base_service.get_professions_page(
+        db,
+        limit=limit,
+        offset=offset,
+        search=search,
+        group_id=group_id,
+    )
+    return {"items": [ProfessionListOut(**item) for item in items], "total": total}
 
 
 @professions_router.get("/professions/{profession_id}", response_model=ProfessionOut)
@@ -325,15 +331,23 @@ async def delete_competency_group(
 async def list_competencies(
     limit: Optional[int] = Query(None, ge=1, le=10000),
     offset: int = Query(0, ge=0),
+    search: Optional[str] = Query(None),
+    competency_type: Optional[str] = Query(None),
     group_id: Optional[int] = Query(None),
     collection_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    all_items = await knowledge_base_service.get_competencies(db, group_id=group_id, collection_id=collection_id)
-    total = len(all_items)
-    sliced = all_items[offset:offset + limit] if limit is not None else (all_items[offset:] if offset else all_items)
-    return {"items": [CompetencyListOut(**item) for item in sliced], "total": total}
+    items, total = await knowledge_base_service.get_competencies_page(
+        db,
+        limit=limit,
+        offset=offset,
+        search=search,
+        competency_type=competency_type,
+        group_id=group_id,
+        collection_id=collection_id,
+    )
+    return {"items": [CompetencyListOut(**item) for item in items], "total": total}
 
 
 @competencies_router.get("/competencies/{competency_id}", response_model=CompetencyDetailOut)

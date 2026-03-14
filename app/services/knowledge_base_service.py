@@ -133,6 +133,55 @@ class KnowledgeBaseService:
             for p in rows
         ]
 
+    async def get_professions_page(
+        self,
+        db: AsyncSession,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        search: str | None = None,
+        group_id: int | None = None,
+    ) -> tuple[list[dict], int]:
+        base_query = select(Profession.id)
+        base_query = await self._apply_profession_list_filters(
+            db,
+            base_query,
+            search=search,
+            group_id=group_id,
+        )
+
+        total = (
+            await db.execute(select(func.count()).select_from(base_query.subquery()))
+        ).scalar_one()
+
+        id_query = base_query.order_by(Profession.name, Profession.id).offset(offset)
+        if limit is not None:
+            id_query = id_query.limit(limit)
+        profession_ids = (await db.execute(id_query)).scalars().all()
+        if not profession_ids:
+            return [], total
+
+        result = await db.execute(
+            select(Profession)
+            .where(Profession.id.in_(profession_ids))
+            .options(selectinload(Profession.labels))
+        )
+        profession_map = {profession.id: profession for profession in result.scalars().all()}
+        ordered_rows = [profession_map[profession_id] for profession_id in profession_ids]
+        return [
+            {
+                "id": p.id,
+                "esco_uri": p.esco_uri,
+                "code": p.code,
+                "name": p.name,
+                "description": p.description,
+                "profession_group_id": p.profession_group_id,
+                "parent_profession_id": p.parent_profession_id,
+                "aliases": [lbl.label for lbl in p.labels if lbl.label_type != "preferred"],
+            }
+            for p in ordered_rows
+        ], total
+
     async def get_profession(self, db: AsyncSession, profession_id: int) -> Profession:
         result = await db.execute(
             select(Profession)
@@ -453,6 +502,62 @@ class KnowledgeBaseService:
             }
             for c in rows
         ]
+
+    async def get_competencies_page(
+        self,
+        db: AsyncSession,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        search: str | None = None,
+        competency_type: str | None = None,
+        group_id: int | None = None,
+        collection_id: int | None = None,
+    ) -> tuple[list[dict], int]:
+        base_query = select(Competency.id)
+        base_query = self._apply_competency_list_filters(
+            base_query,
+            search=search,
+            competency_type=competency_type,
+            group_id=group_id,
+            collection_id=collection_id,
+        )
+
+        total = (
+            await db.execute(select(func.count()).select_from(base_query.subquery()))
+        ).scalar_one()
+
+        id_query = base_query.order_by(Competency.name, Competency.id).offset(offset)
+        if limit is not None:
+            id_query = id_query.limit(limit)
+        competency_ids = (await db.execute(id_query)).scalars().all()
+        if not competency_ids:
+            return [], total
+
+        result = await db.execute(
+            select(Competency)
+            .where(Competency.id.in_(competency_ids))
+            .options(
+                selectinload(Competency.labels),
+                selectinload(Competency.group_memberships).selectinload(CompetencyGroupMember.group),
+                selectinload(Competency.collection_memberships).selectinload(CompetencyCollectionMember.collection),
+            )
+        )
+        competency_map = {competency.id: competency for competency in result.scalars().unique().all()}
+        ordered_rows = [competency_map[competency_id] for competency_id in competency_ids]
+        return [
+            {
+                "id": c.id,
+                "esco_uri": c.esco_uri,
+                "name": c.name,
+                "description": c.description,
+                "competency_type": c.competency_type,
+                "aliases": [lbl.label for lbl in c.labels if lbl.label_type != "preferred"],
+                "group_names": [m.group.name for m in c.group_memberships],
+                "collection_names": [m.collection.name for m in c.collection_memberships],
+            }
+            for c in ordered_rows
+        ], total
 
     async def get_competency(self, db: AsyncSession, competency_id: int) -> Competency:
         result = await db.execute(select(Competency).where(Competency.id == competency_id))
@@ -1306,6 +1411,109 @@ class KnowledgeBaseService:
         result = await db.execute(query)
         if result.scalar_one_or_none() is not None:
             raise HTTPException(status_code=409, detail=detail)
+
+    async def _apply_profession_list_filters(
+        self,
+        db: AsyncSession,
+        query,
+        *,
+        search: str | None,
+        group_id: int | None,
+    ):
+        if search:
+            normalized = f"%{search.strip().lower()}%"
+            label_match = (
+                select(ProfessionLabel.id)
+                .where(
+                    ProfessionLabel.profession_id == Profession.id,
+                    ProfessionLabel.label_type != "preferred",
+                    func.lower(ProfessionLabel.label).like(normalized),
+                )
+                .exists()
+            )
+            query = query.where(
+                or_(
+                    func.lower(Profession.name).like(normalized),
+                    label_match,
+                )
+            )
+        if group_id is not None:
+            descendant_ids = await self._get_profession_group_descendant_ids(db, group_id)
+            query = query.where(Profession.profession_group_id.in_(descendant_ids))
+        return query
+
+    def _apply_competency_list_filters(
+        self,
+        query,
+        *,
+        search: str | None,
+        competency_type: str | None,
+        group_id: int | None,
+        collection_id: int | None,
+    ):
+        if search:
+            normalized = f"%{search.strip().lower()}%"
+            label_match = (
+                select(CompetencyLabel.id)
+                .where(
+                    CompetencyLabel.competency_id == Competency.id,
+                    CompetencyLabel.label_type != "preferred",
+                    func.lower(CompetencyLabel.label).like(normalized),
+                )
+                .exists()
+            )
+            query = query.where(
+                or_(
+                    func.lower(Competency.name).like(normalized),
+                    label_match,
+                )
+            )
+        if competency_type is not None:
+            if competency_type == "unknown":
+                query = query.where(Competency.competency_type.is_(None))
+            else:
+                query = query.where(Competency.competency_type == competency_type)
+        if group_id is not None:
+            query = query.where(
+                select(CompetencyGroupMember.group_id)
+                .where(
+                    CompetencyGroupMember.competency_id == Competency.id,
+                    CompetencyGroupMember.group_id == group_id,
+                )
+                .exists()
+            )
+        if collection_id is not None:
+            query = query.where(
+                select(CompetencyCollectionMember.collection_id)
+                .where(
+                    CompetencyCollectionMember.competency_id == Competency.id,
+                    CompetencyCollectionMember.collection_id == collection_id,
+                )
+                .exists()
+            )
+        return query
+
+    async def _get_profession_group_descendant_ids(
+        self,
+        db: AsyncSession,
+        group_id: int,
+    ) -> list[int]:
+        result = await db.execute(select(ProfessionGroup.id, ProfessionGroup.parent_group_id))
+        children_by_parent: dict[int | None, list[int]] = {}
+        for row in result.all():
+            children_by_parent.setdefault(row.parent_group_id, []).append(row.id)
+
+        descendant_ids: list[int] = []
+        queue = [group_id]
+        seen: set[int] = set()
+        while queue:
+            current = queue.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            descendant_ids.append(current)
+            queue.extend(children_by_parent.get(current, []))
+        return descendant_ids
 
     async def _get_competency_map(self, db: AsyncSession) -> dict[int, str]:
         result = await db.execute(select(Competency.id, Competency.name))
