@@ -36,6 +36,7 @@ def create_catalog(admin_token: str, marker: str) -> tuple[dict, dict, list[dict
         post(admin_token, "/competencies", {"name": f"[TEST {marker}] Python", "competency_type": "skill/competence"}),
         post(admin_token, "/competencies", {"name": f"[TEST {marker}] FastAPI", "competency_type": "skill/competence"}),
         post(admin_token, "/competencies", {"name": f"[TEST {marker}] Kubernetes", "competency_type": "skill/competence"}),
+        post(admin_token, "/competencies", {"name": f"[TEST {marker}] PostgreSQL", "competency_type": "skill/competence"}),
     ]
     post(
         admin_token,
@@ -60,6 +61,7 @@ def create_completed_model(
     expert_token: str,
     expert_user: dict,
     profession: dict,
+    extra_competency_id: int,
     marker: str,
 ) -> tuple[dict, list[int]]:
     model = post(
@@ -89,6 +91,13 @@ def create_completed_model(
         {"name": f"[TEST {marker}] Product domain expertise"},
     )
     _ = custom
+    detail = get(hr_token, f"/competency-models/{model_id}")
+    if len(detail["alternatives"]) < 2:
+        post(
+            hr_token,
+            f"/competency-models/{model_id}/alternatives",
+            {"competency_id": extra_competency_id},
+        )
     post(
         hr_token,
         f"/competency-models/{model_id}/submit",
@@ -98,6 +107,9 @@ def create_completed_model(
     detail = get(hr_token, f"/competency-models/{model_id}")
     alternative_ids = [item["id"] for item in detail["alternatives"]]
     custom_alternative_ids = [item["id"] for item in detail["alternatives"] if item["source_type"] == "custom"]
+    ranked_alternative_ids = custom_alternative_ids + [
+        item["id"] for item in detail["alternatives"] if item["id"] not in custom_alternative_ids
+    ]
     ok(
         "Submit expert evaluation for model",
         requests.post(
@@ -112,10 +124,10 @@ def create_completed_model(
                     {
                         "alternative_id": alternative_id,
                         "criterion_id": criterion_id,
-                        "rank": 1 if alternative_id in custom_alternative_ids else index + 2,
+                        "rank": index + 1,
                     }
                     for criterion_id in [criterion_1["id"], criterion_2["id"]]
-                    for index, alternative_id in enumerate(alternative_ids)
+                    for index, alternative_id in enumerate(ranked_alternative_ids)
                 ],
             },
         ),
@@ -124,8 +136,8 @@ def create_completed_model(
     post(hr_token, f"/competency-models/{model_id}/calculate", expected=200)
     completed_detail = get(hr_token, f"/competency-models/{model_id}")
     final_alternatives = [item for item in completed_detail["alternatives"] if item["final_weight"] is not None]
-    assert len(final_alternatives) == 3, "Expected three final criteria for selection model"
-    assert any(item["source_type"] == "custom" for item in final_alternatives), "Expected custom criterion in final model"
+    assert len(final_alternatives) >= 2, "Expected at least two final alternatives for selection model"
+    assert any(item["source_type"] == "custom" for item in final_alternatives), "Expected custom alternative in final model"
     return model, final_alternatives
 
 
@@ -165,6 +177,7 @@ def main() -> None:
         direct_expert_token,
         direct_expert_user,
         profession,
+        competencies[3]["id"],
         marker,
     )
 

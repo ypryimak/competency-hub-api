@@ -1,6 +1,14 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import AliasChoices, BaseModel, EmailStr, Field, computed_field, field_validator
+
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    EmailStr,
+    Field,
+    computed_field,
+    field_validator,
+)
 
 from app.core.enums import UserRoleName, get_user_role_name
 
@@ -14,11 +22,11 @@ class UserRegister(BaseModel):
     @classmethod
     def password_strength(cls, v: str) -> str:
         if len(v) < 8:
-            raise ValueError("Пароль має містити щонайменше 8 символів")
+            raise ValueError("Password must contain at least 8 characters")
         if not any(c.isalpha() for c in v):
-            raise ValueError("Пароль має містити щонайменше одну літеру")
+            raise ValueError("Password must contain at least one letter")
         if not any(c.isdigit() for c in v):
-            raise ValueError("Пароль має містити щонайменше одну цифру")
+            raise ValueError("Password must contain at least one digit")
         return v
 
 
@@ -71,11 +79,11 @@ class UserUpdate(BaseModel):
         if v is None:
             return v
         if len(v) < 8:
-            raise ValueError("Пароль має містити щонайменше 8 символів")
+            raise ValueError("Password must contain at least 8 characters")
         if not any(c.isalpha() for c in v):
-            raise ValueError("Пароль має містити щонайменше одну літеру")
+            raise ValueError("Password must contain at least one letter")
         if not any(c.isdigit() for c in v):
-            raise ValueError("Пароль має містити щонайменше одну цифру")
+            raise ValueError("Password must contain at least one digit")
         return v
 
 
@@ -91,9 +99,9 @@ class ResetPasswordRequest(BaseModel):
     @classmethod
     def password_strength(cls, v: str) -> str:
         if len(v) < 8:
-            raise ValueError("Пароль має містити щонайменше 8 символів")
+            raise ValueError("Password must contain at least 8 characters")
         if not any(c.isalpha() for c in v):
-            raise ValueError("Пароль має містити щонайменше одну літеру")
+            raise ValueError("Password must contain at least one letter")
         if not any(c.isdigit() for c in v):
-            raise ValueError("Пароль має містити щонайменше одну цифру")
+            raise ValueError("Password must contain at least one digit")
         return v

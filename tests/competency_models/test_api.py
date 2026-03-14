@@ -157,6 +157,66 @@ def main() -> None:
     )
     delete(hr_token, f"/competency-models/{model_id}/expert-invites/{temp_invite['id']}")
 
+    print("\n[2.1] Reorder experts (BUG-009)")
+    ok(
+        "Reorder experts atomically",
+        requests.post(
+            f"{BASE_URL}/competency-models/{model_id}/experts/reorder",
+            headers=auth_headers(hr_token),
+            json={
+                "ranks": [
+                    {"kind": "expert", "id": direct_expert["id"], "rank": 2},
+                    {"kind": "invite", "id": invite["id"], "rank": 1},
+                ]
+            },
+        ),
+        204,
+    )
+    # Restore original ranks for the rest of the test
+    ok(
+        "Restore original ranks",
+        requests.post(
+            f"{BASE_URL}/competency-models/{model_id}/experts/reorder",
+            headers=auth_headers(hr_token),
+            json={
+                "ranks": [
+                    {"kind": "expert", "id": direct_expert["id"], "rank": 1},
+                    {"kind": "invite", "id": invite["id"], "rank": 2},
+                ]
+            },
+        ),
+        204,
+    )
+    # Duplicate rank must be rejected by Pydantic (422)
+    expect_status(
+        "Reject duplicate ranks in reorder request",
+        requests.post(
+            f"{BASE_URL}/competency-models/{model_id}/experts/reorder",
+            headers=auth_headers(hr_token),
+            json={
+                "ranks": [
+                    {"kind": "expert", "id": direct_expert["id"], "rank": 1},
+                    {"kind": "invite", "id": invite["id"], "rank": 1},
+                ]
+            },
+        ),
+        422,
+    )
+    # Foreign expert ID must be rejected (400)
+    expect_status(
+        "Reject foreign expert id in reorder request",
+        requests.post(
+            f"{BASE_URL}/competency-models/{model_id}/experts/reorder",
+            headers=auth_headers(hr_token),
+            json={
+                "ranks": [
+                    {"kind": "expert", "id": 999999999, "rank": 1},
+                ]
+            },
+        ),
+        400,
+    )
+
     print("\n[3] Criteria and alternatives")
     temp_criterion = post(
         hr_token,
@@ -215,6 +275,13 @@ def main() -> None:
     delete(hr_token, f"/competency-models/{model_id}/alternatives/{temp_alternative['id']}")
 
     detail = get(hr_token, f"/competency-models/{model_id}")
+    if len(detail["alternatives"]) < 2:
+        post(
+            hr_token,
+            f"/competency-models/{model_id}/alternatives",
+            {"competency_id": competencies[3]["id"]},
+        )
+        detail = get(hr_token, f"/competency-models/{model_id}")
     alternative_ids = [item["id"] for item in detail["alternatives"]]
     custom_alternatives = [item for item in detail["alternatives"] if item["source_type"] == "custom"]
     assert detail["experts"][0]["user"]["id"] == direct_expert_user["id"], "Expected nested expert user in detail"
@@ -260,6 +327,13 @@ def main() -> None:
         {"name": "Foreign criterion"},
     )
     foreign_detail = get(hr_token, f"/competency-models/{foreign_model['id']}")
+    if not foreign_detail["alternatives"]:
+        post(
+            hr_token,
+            f"/competency-models/{foreign_model['id']}/alternatives",
+            {"competency_id": competencies[3]["id"]},
+        )
+        foreign_detail = get(hr_token, f"/competency-models/{foreign_model['id']}")
     foreign_alternative = foreign_detail["alternatives"][0]
 
     expect_status(

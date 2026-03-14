@@ -22,6 +22,8 @@ from app.schemas.knowledge_base import (
     CompetencyLabelCreate,
     CompetencyLabelOut,
     CompetencyLabelUpdate,
+    CompetencyDetailOut,
+    CompetencyListOut,
     CompetencyOut,
     CompetencyRelationCreate,
     CompetencyRelationOut,
@@ -39,6 +41,7 @@ from app.schemas.knowledge_base import (
     ProfessionCollectionOut,
     ProfessionCollectionUpdate,
     ProfessionCompetencyCreate,
+    ProfessionCompetencyDetailOut,
     ProfessionCompetencyOut,
     ProfessionCompetencyUpdate,
     ProfessionCreate,
@@ -48,6 +51,7 @@ from app.schemas.knowledge_base import (
     ProfessionLabelCreate,
     ProfessionLabelOut,
     ProfessionLabelUpdate,
+    ProfessionListOut,
     ProfessionOut,
     ProfessionUpdate,
     RecalculateProfessionCompetenciesResponse,
@@ -130,7 +134,7 @@ async def list_professions(
     all_items = await knowledge_base_service.get_professions(db)
     total = len(all_items)
     sliced = all_items[offset:offset + limit] if limit is not None else (all_items[offset:] if offset else all_items)
-    return {"items": sliced, "total": total}
+    return {"items": [ProfessionListOut(**item) for item in sliced], "total": total}
 
 
 @professions_router.get("/professions/{profession_id}", response_model=ProfessionOut)
@@ -191,7 +195,7 @@ async def delete_profession_label(
     await knowledge_base_service.delete_profession_label(db, profession_id, label_id)
 
 
-@professions_router.get("/professions/{profession_id}/competencies", response_model=list[ProfessionCompetencyOut])
+@professions_router.get("/professions/{profession_id}/competencies", response_model=list[ProfessionCompetencyDetailOut])
 async def get_profession_competencies(
     profession_id: int,
     db: AsyncSession = Depends(get_db),
@@ -321,22 +325,24 @@ async def delete_competency_group(
 async def list_competencies(
     limit: Optional[int] = Query(None, ge=1, le=10000),
     offset: int = Query(0, ge=0),
+    group_id: Optional[int] = Query(None),
+    collection_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    all_items = await knowledge_base_service.get_competencies(db)
+    all_items = await knowledge_base_service.get_competencies(db, group_id=group_id, collection_id=collection_id)
     total = len(all_items)
     sliced = all_items[offset:offset + limit] if limit is not None else (all_items[offset:] if offset else all_items)
-    return {"items": sliced, "total": total}
+    return {"items": [CompetencyListOut(**item) for item in sliced], "total": total}
 
 
-@competencies_router.get("/competencies/{competency_id}", response_model=CompetencyOut)
+@competencies_router.get("/competencies/{competency_id}", response_model=CompetencyDetailOut)
 async def get_competency(
     competency_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return await knowledge_base_service.get_competency(db, competency_id)
+    return await knowledge_base_service.get_competency_detail(db, competency_id)
 
 
 @competencies_router.get("/competencies/{competency_id}/professions", response_model=list[CompetencyProfessionOut])
@@ -415,6 +421,7 @@ async def remove_competency_from_group(
     _: User = Depends(require_admin),
 ):
     await knowledge_base_service.remove_competency_from_group(db, competency_id, group_id)
+
 
 
 @competencies_router.post("/competencies", response_model=CompetencyOut, status_code=201)

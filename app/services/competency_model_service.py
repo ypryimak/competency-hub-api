@@ -38,6 +38,7 @@ from app.schemas.competency_model import (
     ExpertInviteCreate,
     ExpertInviteOut,
     ExpertInviteUpdate,
+    ExpertReorderRequest,
     ExpertEvaluationStatus,
     ExpertEvaluationSubmit,
     ModelExpertCreate,
@@ -149,22 +150,23 @@ class CompetencyModelService:
         is_draft = model.status == ModelStatus.DRAFT
         is_expert_eval = model.status == ModelStatus.EXPERT_EVALUATION
         is_completed = model.status == ModelStatus.COMPLETED
+        updated_fields = data.model_fields_set
 
         if is_draft:
-            if data.name is not None:
+            if "name" in updated_fields:
                 model.name = data.name
             if data.profession_id is not None:
                 await self._ensure_profession_exists(db, data.profession_id)
                 model.profession_id = data.profession_id
 
         if is_draft or is_expert_eval:
-            if data.evaluation_deadline is not None:
+            if "evaluation_deadline" in updated_fields:
                 model.evaluation_deadline = data.evaluation_deadline
 
         if is_draft or is_expert_eval or is_completed:
-            if data.min_competency_weight is not None:
+            if "min_competency_weight" in updated_fields:
                 model.min_competency_weight = data.min_competency_weight
-            if data.max_competency_rank is not None:
+            if "max_competency_rank" in updated_fields:
                 model.max_competency_rank = data.max_competency_rank
 
         await db.flush()
@@ -284,6 +286,41 @@ class CompetencyModelService:
         await db.refresh(expert)
         return expert
 
+    async def reorder_experts(
+        self, db: AsyncSession, model_id: int, user_id: int, data: ExpertReorderRequest
+    ) -> None:
+        model = await self._get_model_orm(db, model_id, user_id)
+        self._require_status(model, ModelStatus.DRAFT)
+
+        # Load all experts and pending invites for this model
+        experts_result = await db.execute(
+            select(ModelExpert).where(ModelExpert.model_id == model_id)
+        )
+        invites_result = await db.execute(
+            select(ExpertInvite).where(
+                ExpertInvite.model_id == model_id,
+                ExpertInvite.accepted_by_user_id.is_(None),
+            )
+        )
+        expert_map = {e.id: e for e in experts_result.scalars().all()}
+        invite_map = {i.id: i for i in invites_result.scalars().all()}
+
+        for item in data.ranks:
+            if item.kind == "expert":
+                if item.id not in expert_map:
+                    raise HTTPException(status_code=404, detail=f"Expert {item.id} not found in this model")
+            else:
+                if item.id not in invite_map:
+                    raise HTTPException(status_code=404, detail=f"Invite {item.id} not found in this model")
+
+        # Apply all rank changes in one flush — uniqueness is guaranteed by schema-level validation
+        for item in data.ranks:
+            if item.kind == "expert":
+                expert_map[item.id].rank = item.rank
+            else:
+                invite_map[item.id].rank = item.rank
+        await db.flush()
+
     async def remove_expert(self, db: AsyncSession, model_id: int, expert_id: int, user_id: int) -> None:
         model = await self._get_model_orm(db, model_id, user_id)
         self._require_status(model, ModelStatus.DRAFT)
@@ -354,6 +391,11 @@ class CompetencyModelService:
                 func.lower(CustomCompetency.name) == normalized_name.lower(),
             ),
             "Custom competency with this name already exists in the model",
+        )
+        await self._ensure_missing(
+            db,
+            select(Competency).where(func.lower(Competency.name) == normalized_name.lower()),
+            "A competency with this name already exists in the knowledge base",
         )
         custom_competency = CustomCompetency(
             model_id=model_id,
@@ -1041,16 +1083,13 @@ class CompetencyModelService:
         rows = (
             await db.execute(
                 select(ProfessionCompetency)
-                .where(ProfessionCompetency.profession_id == model.profession_id)
+                .where(
+                    ProfessionCompetency.profession_id == model.profession_id,
+                    ProfessionCompetency.link_type == "esco_essential",
+                )
             )
         ).scalars().all()
-        rows = sorted(
-            rows,
-            key=lambda row: (
-                -(LINK_TYPE_SCORES.get(row.link_type, 0.0) + float(row.weight or 0)),
-                row.link_type,
-            ),
-        )[:10]
+        rows = sorted(rows, key=lambda row: -(float(row.weight or 0)))
         for row in rows:
             db.add(Alternative(model_id=model.id, competency_id=row.competency_id))
         await db.flush()

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, Field, computed_field, model_validator
 
@@ -59,6 +59,25 @@ class ModelExpertCreate(BaseModel):
 
 class ModelExpertUpdate(BaseModel):
     rank: Optional[int] = None
+
+
+class ExpertRankItem(BaseModel):
+    kind: Literal["expert", "invite"]
+    id: int
+    rank: int
+
+
+class ExpertReorderRequest(BaseModel):
+    ranks: list[ExpertRankItem]
+
+    @model_validator(mode="after")
+    def unique_ranks(self) -> "ExpertReorderRequest":
+        seen: set[int] = set()
+        for item in self.ranks:
+            if item.rank in seen:
+                raise ValueError(f"Duplicate rank {item.rank} in reorder request")
+            seen.add(item.rank)
+        return self
 
 
 class ModelExpertOut(BaseModel):

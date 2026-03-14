@@ -187,6 +187,67 @@ def main() -> None:
     )
     get(token, f"/competency-collections/{competency_collection['id']}/members")
 
+    # FEAT-024: group_id and collection_id filter params on GET /competencies
+    filtered_by_group = ok(
+        f"GET /competencies?group_id={competency_group['id']}",
+        requests.get(
+            f"{BASE_URL}/competencies?group_id={competency_group['id']}",
+            headers=auth_headers(token),
+        ),
+        200,
+    )
+    assert any(item["id"] == competencies[0]["id"] for item in filtered_by_group["items"]), (
+        "Competency with group membership must appear in group_id filter results"
+    )
+    filtered_by_collection = ok(
+        f"GET /competencies?collection_id={competency_collection['id']}",
+        requests.get(
+            f"{BASE_URL}/competencies?collection_id={competency_collection['id']}",
+            headers=auth_headers(token),
+        ),
+        200,
+    )
+    assert any(item["id"] == competencies[0]["id"] for item in filtered_by_collection["items"]), (
+        "Competency in collection must appear in collection_id filter results"
+    )
+
+    # FEAT-024: aliases field in competencies list (after label is created)
+    comp_list_with_aliases = ok(
+        "GET /competencies (aliases check)",
+        requests.get(f"{BASE_URL}/competencies?limit=100", headers=auth_headers(token)),
+        200,
+    )
+    test_comp_item = next(
+        (c for c in comp_list_with_aliases["items"] if c["id"] == competencies[0]["id"]), None
+    )
+    assert test_comp_item is not None, "Seeded competency must appear in GET /competencies"
+    assert "aliases" in test_comp_item, "GET /competencies items must include 'aliases' field"
+    assert isinstance(test_comp_item["aliases"], list)
+
+    # FEAT-025: GET /competencies/{id} includes collections array
+    comp_detail = get(token, f"/competencies/{competencies[0]['id']}")
+    assert "collections" in comp_detail, "GET /competencies/{id} must include 'collections' field"
+    assert isinstance(comp_detail["collections"], list)
+    assert any(c["id"] == competency_collection["id"] for c in comp_detail["collections"]), (
+        "Competency detail must list collections the competency belongs to"
+    )
+
+    # FEAT-026: aliases field in professions list (after profession label is created)
+    prof_list_with_aliases = ok(
+        "GET /professions (aliases check)",
+        requests.get(f"{BASE_URL}/professions?limit=100", headers=auth_headers(token)),
+        200,
+    )
+    test_prof_item = next(
+        (p for p in prof_list_with_aliases["items"] if p["id"] == profession["id"]), None
+    )
+    assert test_prof_item is not None, "Seeded profession must appear in GET /professions"
+    assert "aliases" in test_prof_item, "GET /professions items must include 'aliases' field"
+    assert isinstance(test_prof_item["aliases"], list)
+    assert any(a == profession_label["label"] for a in test_prof_item["aliases"]), (
+        "Profession alias label must appear in 'aliases' list"
+    )
+
     print("\n[5] Profession competency links and jobs")
     post(
         token,
@@ -220,11 +281,29 @@ def main() -> None:
             "weight": 0.6,
         },
     )
-    get(token, f"/professions/{profession['id']}/competencies")
+    # FEAT-027: GET /professions/{id}/competencies returns detail format
+    prof_competencies = get(token, f"/professions/{profession['id']}/competencies")
+    assert isinstance(prof_competencies, list), "Expected list from profession competencies endpoint"
+    if prof_competencies:
+        pc = prof_competencies[0]
+        assert "link_types" in pc, "Profession competency item must include 'link_types' list"
+        assert isinstance(pc["link_types"], list), "'link_types' must be a list"
+        assert "weight" in pc, "Profession competency item must include 'weight'"
+        assert "aliases" in pc, "Profession competency item must include 'aliases'"
+        assert "group_names" in pc, "Profession competency item must include 'group_names'"
+
     linked_professions = get(token, f"/competencies/{competencies[0]['id']}/professions")
     assert any(item["profession_id"] == profession["id"] for item in linked_professions), (
         "Expected profession link in competency professions endpoint"
     )
+    # FEAT-025: GET /competencies/{id}/professions returns detail format
+    if linked_professions:
+        lp = linked_professions[0]
+        assert "link_types" in lp, "Linked profession item must include 'link_types' list"
+        assert isinstance(lp["link_types"], list), "'link_types' must be a list"
+        assert "weight" in lp, "Linked profession item must include 'weight'"
+        assert "aliases" in lp, "Linked profession item must include 'aliases'"
+        assert "profession_group_name" in lp, "Linked profession item must include 'profession_group_name'"
     similar = get(token, f"/professions/{profession['id']}/similar")
     assert similar, "Expected similar professions for the seeded profession"
     assert any(item["id"] == similar_profession["id"] for item in similar), "Expected related profession in similar list"

@@ -1,20 +1,21 @@
 """
-Document processing service — MVP версія на базі spaCy.
+Document processing service based on spaCy.
 
-Логіка:
-1. Запускаємо spaCy NER на тексті → отримуємо іменовані сутності та noun chunks.
-2. Нормалізуємо (lowercase, strip) і звіряємо з переліком компетенцій з БД.
-3. Повертаємо matched ids + нерозпізнані токени (для валідації юзером).
+Flow:
+1. Run spaCy NER and noun chunk extraction on the input text.
+2. Normalize tokens and compare them against competencies from the database.
+3. Return matched ids together with unrecognized tokens for further review.
 
-Для встановлення моделі:
+Model setup:
     pip install spacy
     python -m spacy download en_core_web_sm
-    python -m spacy download uk_core_news_sm  # для українських резюме (опційно)
+    python -m spacy download uk_core_news_sm  # optional for Ukrainian resumes
 """
 from __future__ import annotations
 
 import re
 from typing import Optional
+
 import spacy
 from spacy.language import Language
 
@@ -22,48 +23,45 @@ _nlp_cache: dict[str, Language] = {}
 
 
 def _get_nlp(lang: str = "en") -> Language:
-    """Lazy-load spaCy модель (кешується)."""
+    """Lazy-load and cache the spaCy model."""
     model = "en_core_web_sm" if lang == "en" else "uk_core_news_sm"
     if model not in _nlp_cache:
         try:
             _nlp_cache[model] = spacy.load(model)
         except OSError:
-            # Fallback: якщо модель не встановлена — використовуємо blank
+            # Fall back to a blank language model when the package is missing.
             _nlp_cache[model] = spacy.blank(lang)
     return _nlp_cache[model]
 
 
 def _normalize(text: str) -> str:
-    """Нормалізація токену для порівняння."""
+    """Normalize a token before comparison."""
     return re.sub(r"\s+", " ", text.lower().strip())
 
 
 def extract_candidate_tokens(text: str, lang: str = "en") -> list[str]:
     """
-    Витягує з тексту кандидатів на компетенції:
-    - NER entities (SKILL, ORG, PRODUCT — часто містять технології)
-    - Noun chunks (словосполучення-іменники)
-    - Окремі слова з тегами NOUN/PROPN
+    Extract candidate competency tokens from text using:
+    - named entities;
+    - noun chunks;
+    - standalone NOUN/PROPN tokens.
 
-    Повертає нормалізований список унікальних токенів.
+    Returns a normalized list of unique tokens.
     """
     nlp = _get_nlp(lang)
     doc = nlp(text)
 
     tokens: set[str] = set()
 
-    # NER entities
     for ent in doc.ents:
         if ent.label_ in ("SKILL", "ORG", "PRODUCT", "WORK_OF_ART", "GPE"):
             tokens.add(_normalize(ent.text))
 
-    # Noun chunks
     for chunk in doc.noun_chunks:
         normalized = _normalize(chunk.text)
         if 2 <= len(normalized) <= 60:
             tokens.add(normalized)
 
-    # Окремі значущі іменники
     for token in doc:
         if token.pos_ in ("NOUN", "PROPN") and not token.is_stop and len(token.text) > 2:
             tokens.add(_normalize(token.lemma_))
@@ -98,16 +96,16 @@ def match_competencies(
     competency_terms: dict[int, str | list[str] | tuple[str, ...] | set[str]],
 ) -> tuple[list[int], list[int], list[str]]:
     """
-    Звіряє токени з переліком компетенцій.
+    Match extracted tokens against known competencies.
 
-    Стратегії збігу (від точного до нечіткого):
-    1. Точний збіг (normalized == normalized)
-    2. Входження: токен містить назву компетенції або навпаки
+    Matching strategy:
+    1. Exact normalized match.
+    2. Limited substring matching for longer multi-word tokens.
 
-    Повертає:
-        matched_ids      — id компетенцій, що знайдені
-        matched_names    — їх назви
-        unrecognized     — токени, що не знайшли пари
+    Returns:
+        matched_ids
+        matched_names
+        unrecognized_tokens
     """
     display_names = {
         competency_id: value if isinstance(value, str) else next(iter(value), "")
@@ -126,7 +124,6 @@ def match_competencies(
 
     for token in candidate_tokens:
         found = False
-        # 1. Точний збіг
         for cid in exact_lookup.get(token, []):
             if cid in used_ids:
                 continue
@@ -139,8 +136,7 @@ def match_competencies(
         if found:
             continue
 
-        # 2. Обмежене часткове входження тільки для довших multi-word token-ів.
-        # Це зменшує шум типу "model" -> десятки нерелевантних skills.
+        # Reduce noise from short generic words such as "model".
         if " " in token and len(token) >= 6:
             for cid, aliases in normalized_map.items():
                 if cid in used_ids:
@@ -164,7 +160,7 @@ def match_competencies(
 
 
 class DocumentProcessingService:
-    """Сервіс для парсингу компетенцій з текстів вакансій і резюме."""
+    """Service for parsing competencies from vacancy and resume text."""
 
     def parse_text(
         self,
@@ -173,12 +169,12 @@ class DocumentProcessingService:
         lang: str = "en",
     ) -> tuple[list[int], list[str], list[str]]:
         """
-        Головний метод: текст → matched competency ids.
+        Main entry point for competency parsing.
 
         Args:
-            text: текст вакансії або резюме
-            competency_map: {id: name} з БД
-            lang: мова тексту ("en" або "uk")
+            text: vacancy or resume text
+            competency_map: {id: name} or aliases loaded from the database
+            lang: input language, for example "en" or "uk"
 
         Returns:
             (matched_ids, matched_names, unrecognized_tokens)

@@ -112,9 +112,26 @@ class KnowledgeBaseService:
     async def delete_profession_group(self, db: AsyncSession, group_id: int) -> None:
         await db.delete(await self.get_profession_group(db, group_id))
 
-    async def get_professions(self, db: AsyncSession) -> Sequence[Profession]:
-        result = await db.execute(select(Profession).order_by(Profession.name))
-        return result.scalars().all()
+    async def get_professions(self, db: AsyncSession) -> list[dict]:
+        result = await db.execute(
+            select(Profession)
+            .options(selectinload(Profession.labels))
+            .order_by(Profession.name)
+        )
+        rows = result.scalars().all()
+        return [
+            {
+                "id": p.id,
+                "esco_uri": p.esco_uri,
+                "code": p.code,
+                "name": p.name,
+                "description": p.description,
+                "profession_group_id": p.profession_group_id,
+                "parent_profession_id": p.parent_profession_id,
+                "aliases": [lbl.label for lbl in p.labels if lbl.label_type != "preferred"],
+            }
+            for p in rows
+        ]
 
     async def get_profession(self, db: AsyncSession, profession_id: int) -> Profession:
         result = await db.execute(
@@ -394,9 +411,48 @@ class KnowledgeBaseService:
     async def delete_competency_group(self, db: AsyncSession, group_id: int) -> None:
         await db.delete(await self.get_competency_group(db, group_id))
 
-    async def get_competencies(self, db: AsyncSession) -> Sequence[Competency]:
-        result = await db.execute(select(Competency).order_by(Competency.name))
-        return result.scalars().all()
+    async def get_competencies(
+        self,
+        db: AsyncSession,
+        group_id: int | None = None,
+        collection_id: int | None = None,
+    ) -> list[dict]:
+        q = (
+            select(Competency)
+            .options(
+                selectinload(Competency.labels),
+                selectinload(Competency.group_memberships).selectinload(CompetencyGroupMember.group),
+                selectinload(Competency.collection_memberships).selectinload(CompetencyCollectionMember.collection),
+            )
+            .order_by(Competency.name)
+        )
+        if group_id is not None:
+            q = q.join(
+                CompetencyGroupMember,
+                (CompetencyGroupMember.competency_id == Competency.id)
+                & (CompetencyGroupMember.group_id == group_id),
+            )
+        if collection_id is not None:
+            q = q.join(
+                CompetencyCollectionMember,
+                (CompetencyCollectionMember.competency_id == Competency.id)
+                & (CompetencyCollectionMember.collection_id == collection_id),
+            )
+        result = await db.execute(q)
+        rows = result.scalars().unique().all()
+        return [
+            {
+                "id": c.id,
+                "esco_uri": c.esco_uri,
+                "name": c.name,
+                "description": c.description,
+                "competency_type": c.competency_type,
+                "aliases": [lbl.label for lbl in c.labels if lbl.label_type != "preferred"],
+                "group_names": [m.group.name for m in c.group_memberships],
+                "collection_names": [m.collection.name for m in c.collection_memberships],
+            }
+            for c in rows
+        ]
 
     async def get_competency(self, db: AsyncSession, competency_id: int) -> Competency:
         result = await db.execute(select(Competency).where(Competency.id == competency_id))
@@ -405,6 +461,36 @@ class KnowledgeBaseService:
             raise HTTPException(status_code=404, detail="Competency not found")
         return obj
 
+    async def get_competency_detail(self, db: AsyncSession, competency_id: int) -> dict:
+        result = await db.execute(
+            select(Competency)
+            .where(Competency.id == competency_id)
+            .options(
+                selectinload(Competency.collection_memberships).selectinload(
+                    CompetencyCollectionMember.collection
+                )
+            )
+        )
+        obj = result.scalar_one_or_none()
+        if not obj:
+            raise HTTPException(status_code=404, detail="Competency not found")
+        return {
+            "id": obj.id,
+            "esco_uri": obj.esco_uri,
+            "name": obj.name,
+            "description": obj.description,
+            "competency_type": obj.competency_type,
+            "collections": [
+                {"id": m.collection.id, "code": m.collection.code, "name": m.collection.name, "description": m.collection.description}
+                for m in obj.collection_memberships
+            ],
+        }
+
+    LINK_WEIGHT_MAP = {
+        "esco_essential": 0.7,
+        "esco_optional": 0.3,
+    }
+
     async def get_competency_professions(self, db: AsyncSession, competency_id: int) -> list[dict]:
         await self.get_competency(db, competency_id)
         result = await db.execute(
@@ -412,23 +498,52 @@ class KnowledgeBaseService:
                 ProfessionCompetency.profession_id,
                 Profession.name.label("profession_name"),
                 Profession.profession_group_id,
+                ProfessionGroup.name.label("profession_group_name"),
                 ProfessionCompetency.link_type,
                 ProfessionCompetency.weight,
             )
             .join(Profession, Profession.id == ProfessionCompetency.profession_id)
+            .outerjoin(ProfessionGroup, ProfessionGroup.id == Profession.profession_group_id)
             .where(ProfessionCompetency.competency_id == competency_id)
-            .order_by(Profession.name, ProfessionCompetency.link_type)
         )
-        return [
-            {
-                "profession_id": row.profession_id,
-                "profession_name": row.profession_name,
-                "profession_group_id": row.profession_group_id,
-                "link_type": row.link_type,
-                "weight": float(row.weight) if row.weight is not None else None,
-            }
-            for row in result.all()
-        ]
+        rows = result.all()
+
+        # Load aliases for each profession
+        profession_ids = list({row.profession_id for row in rows})
+        alias_result = await db.execute(
+            select(ProfessionLabel.profession_id, ProfessionLabel.label)
+            .where(
+                ProfessionLabel.profession_id.in_(profession_ids),
+                ProfessionLabel.label_type != "preferred",
+            )
+        )
+        aliases_by_profession: dict[int, list[str]] = {}
+        for a_row in alias_result.all():
+            aliases_by_profession.setdefault(a_row.profession_id, []).append(a_row.label)
+
+        # Deduplicate by profession_id: keep max computed weight, collect all link types
+        deduplicated: dict[int, dict] = {}
+        for row in rows:
+            computed_weight = self.LINK_WEIGHT_MAP.get(row.link_type, 0.0)
+            pid = row.profession_id
+            if pid not in deduplicated:
+                deduplicated[pid] = {
+                    "profession_id": pid,
+                    "profession_name": row.profession_name,
+                    "profession_group_id": row.profession_group_id,
+                    "profession_group_name": row.profession_group_name,
+                    "link_types": [row.link_type],
+                    "weight": computed_weight,
+                    "aliases": aliases_by_profession.get(pid, []),
+                }
+            else:
+                existing = deduplicated[pid]
+                if row.link_type not in existing["link_types"]:
+                    existing["link_types"].append(row.link_type)
+                if computed_weight > existing["weight"]:
+                    existing["weight"] = computed_weight
+
+        return sorted(deduplicated.values(), key=lambda r: -r["weight"])
 
     async def create_competency(self, db: AsyncSession, data: CompetencyCreate) -> Competency:
         obj = Competency(
@@ -575,12 +690,60 @@ class KnowledgeBaseService:
     async def get_profession_competencies(self, db: AsyncSession, profession_id: int) -> list[dict]:
         await self.get_profession(db, profession_id)
         result = await db.execute(
-            select(ProfessionCompetency, Competency.name)
+            select(
+                ProfessionCompetency.competency_id,
+                ProfessionCompetency.link_type,
+                Competency.name.label("competency_name"),
+                Competency.competency_type,
+            )
             .join(Competency, Competency.id == ProfessionCompetency.competency_id)
             .where(ProfessionCompetency.profession_id == profession_id)
         )
-        rows = [self._profession_competency_row_to_dict(row) for row in result.all()]
-        return sorted(rows, key=self._profession_competency_sort_key)
+        rows = result.all()
+
+        competency_ids = list({row.competency_id for row in rows})
+        label_result = await db.execute(
+            select(CompetencyLabel.competency_id, CompetencyLabel.label)
+            .where(
+                CompetencyLabel.competency_id.in_(competency_ids),
+                CompetencyLabel.label_type != "preferred",
+            )
+        )
+        aliases_by_comp: dict[int, list[str]] = {}
+        for lr in label_result.all():
+            aliases_by_comp.setdefault(lr.competency_id, []).append(lr.label)
+
+        group_result = await db.execute(
+            select(CompetencyGroupMember.competency_id, CompetencyGroup.name)
+            .join(CompetencyGroup, CompetencyGroup.id == CompetencyGroupMember.group_id)
+            .where(CompetencyGroupMember.competency_id.in_(competency_ids))
+        )
+        groups_by_comp: dict[int, list[str]] = {}
+        for gr in group_result.all():
+            groups_by_comp.setdefault(gr.competency_id, []).append(gr.name)
+
+        deduplicated: dict[int, dict] = {}
+        for row in rows:
+            computed_weight = self.LINK_WEIGHT_MAP.get(row.link_type, 0.0)
+            cid = row.competency_id
+            if cid not in deduplicated:
+                deduplicated[cid] = {
+                    "competency_id": cid,
+                    "competency_name": row.competency_name,
+                    "competency_type": row.competency_type,
+                    "aliases": aliases_by_comp.get(cid, []),
+                    "group_names": groups_by_comp.get(cid, []),
+                    "link_types": [row.link_type],
+                    "weight": computed_weight,
+                }
+            else:
+                existing = deduplicated[cid]
+                if row.link_type not in existing["link_types"]:
+                    existing["link_types"].append(row.link_type)
+                if computed_weight > existing["weight"]:
+                    existing["weight"] = computed_weight
+
+        return sorted(deduplicated.values(), key=lambda r: -r["weight"])
 
     async def add_profession_competency(
         self, db: AsyncSession, profession_id: int, data: ProfessionCompetencyCreate

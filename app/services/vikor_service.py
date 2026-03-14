@@ -1,18 +1,19 @@
 """
-VIKOR — VIseKriterijumska Optimizacija I Kompromisno Resenje
+VIKOR - VIseKriterijumska Optimizacija I Kompromisno Resenje
 
-Використовується для ранжування кандидатів на основі їх оцінок за компетенціями.
+Used to rank candidates based on their competency-related scores.
 
-Алгоритм:
-1. Будуємо матрицю оцінок (candidates × competencies) — зважена агрегація по експертах
-2. Визначаємо f*_j (ідеал) і f-_j (антиідеал) для кожної компетенції
-3. Розраховуємо S_i (сума зважених відстаней), R_i (макс. зважена відстань)
-4. Розраховуємо Q_i = v*(S-S*)/(S- - S*) + (1-v)*(R-R*)/(R- - R*)
-5. Сортуємо за Q_i (менше = краще)
+Algorithm:
+1. Build a candidate x competency score matrix using expert-weighted aggregation.
+2. Compute best and worst values for each criterion.
+3. Compute S_i (group utility) and R_i (individual regret).
+4. Compute Q_i = v*(S-S*)/(S- - S*) + (1-v)*(R-R*)/(R- - R*).
+5. Sort by Q_i where lower is better.
 
-Параметр v = 0.5 (компроміс між більшістю і опонентом)
+Default compromise parameter: v = 0.5.
 """
 from __future__ import annotations
+
 from dataclasses import dataclass
 
 
@@ -20,72 +21,66 @@ from dataclasses import dataclass
 class VIKORInput:
     candidate_id: int
     criterion_id: int
-    aggregated_score: float     # вже зважена агрегована оцінка по всіх експертах
+    aggregated_score: float  # already aggregated across all experts
 
 
 @dataclass
 class VIKOROutput:
     candidate_id: int
-    s_score: float              # utility measure
-    r_score: float              # regret measure
-    q_score: float              # компромісний рейтинг (менше = краще)
+    s_score: float
+    r_score: float
+    q_score: float  # lower is better
     rank: int
 
 
 def run_vikor(
     scores: list[VIKORInput],
-    criterion_weights: dict[int, float],   # {criterion_id: weight} з МК/selection
+    criterion_weights: dict[int, float],  # {criterion_id: weight}
     v: float = 0.5,
 ) -> list[VIKOROutput]:
     """
-    Запускає VIKOR і повертає ранжований список кандидатів.
+    Run VIKOR and return candidates sorted by final ranking.
 
     Args:
-        scores: агреговані оцінки кандидатів по компетенціях
-        criterion_weights: ваги критеріїв відбору
-        v: параметр компромісу [0, 1], зазвичай 0.5
+        scores: aggregated candidate scores per criterion
+        criterion_weights: selection criterion weights
+        v: compromise parameter in the [0, 1] range
     """
     if not scores:
         return []
 
-    # ── Збираємо унікальні id ────────────────────────────
     candidate_ids = list({s.candidate_id for s in scores})
     criterion_ids = list({s.criterion_id for s in scores})
 
     if len(candidate_ids) < 2:
-        # Для одного кандидата VIKOR не має сенсу — повертаємо rank=1
-        return [VIKOROutput(
-            candidate_id=candidate_ids[0],
-            s_score=0.0, r_score=0.0, q_score=0.0, rank=1
-        )]
+        return [
+            VIKOROutput(
+                candidate_id=candidate_ids[0],
+                s_score=0.0,
+                r_score=0.0,
+                q_score=0.0,
+                rank=1,
+            )
+        ]
 
-    # ── Матриця оцінок: {(candidate_id, criterion_id): score} ──
     score_matrix: dict[tuple[int, int], float] = {
         (s.candidate_id, s.criterion_id): s.aggregated_score
         for s in scores
     }
 
-    # ── Нормалізовані ваги компетенцій ──────────────────
     total_w = sum(criterion_weights.get(cid, 0) for cid in criterion_ids)
     if total_w == 0:
-        # Рівні ваги якщо не задані
         w = {cid: 1.0 / len(criterion_ids) for cid in criterion_ids}
     else:
         w = {cid: criterion_weights.get(cid, 0) / total_w for cid in criterion_ids}
 
-    # ── Ідеал f* і антиідеал f- для кожної компетенції ──
-    # Вища оцінка = краще (benefit criterion)
     f_best: dict[int, float] = {}
     f_worst: dict[int, float] = {}
     for cid in criterion_ids:
-        vals = [
-            score_matrix.get((aid, cid), 0.0)
-            for aid in candidate_ids
-        ]
+        vals = [score_matrix.get((aid, cid), 0.0) for aid in candidate_ids]
         f_best[cid] = max(vals)
         f_worst[cid] = min(vals)
 
-    # ── S і R для кожного кандидата ─────────────────────
     s_scores: dict[int, float] = {}
     r_scores: dict[int, float] = {}
 
@@ -102,7 +97,6 @@ def run_vikor(
         s_scores[aid] = sum(weighted_diffs)
         r_scores[aid] = max(weighted_diffs) if weighted_diffs else 0.0
 
-    # ── Q score ──────────────────────────────────────────
     s_best = min(s_scores.values())
     s_worst = max(s_scores.values())
     r_best = min(r_scores.values())
@@ -122,7 +116,6 @@ def run_vikor(
 
         q_scores[aid] = round(s_term + r_term, 6)
 
-    # ── Ранжування (менший Q = кращий кандидат) ─────────
     sorted_candidates = sorted(candidate_ids, key=lambda aid: q_scores[aid])
 
     return [

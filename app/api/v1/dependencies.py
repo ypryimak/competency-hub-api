@@ -1,12 +1,13 @@
 from typing import Optional
+
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
-from app.core.security import decode_token
 from app.core.enums import UserRole
+from app.core.security import decode_token
+from app.db.session import get_db
 from app.models.models import User
 
 bearer_scheme = HTTPBearer()
@@ -22,7 +23,7 @@ async def get_current_user(
     if not payload or payload.get("type") != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Невалідний або протермінований токен",
+            detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -32,16 +33,17 @@ async def get_current_user(
     except (TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Невалідний або протермінований токен",
+            detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     result = await db.execute(select(User).where(User.id == uid))
     user: Optional[User] = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Користувача не знайдено",
+            detail="User not found",
         )
     return user
 
@@ -50,6 +52,6 @@ async def require_admin(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Тільки адміністратор має доступ до цього ресурсу",
+            detail="Only an administrator can access this resource",
         )
     return current_user

@@ -42,6 +42,19 @@ class ProfessionGroupOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ProfessionListOut(BaseModel):
+    id: int
+    esco_uri: Optional[str] = None
+    code: Optional[str] = None
+    name: str
+    description: Optional[str] = None
+    profession_group_id: int
+    parent_profession_id: Optional[int] = None
+    aliases: list[str] = []
+
+    model_config = {"from_attributes": True}
+
+
 class ProfessionCreate(BaseModel):
     esco_uri: Optional[str] = None
     code: Optional[str] = None
@@ -201,17 +214,29 @@ class CompetencyOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CompetencyListOut(CompetencyOut):
+    aliases: list[str] = []
+    group_names: list[str] = []
+    collection_names: list[str] = []
+
+
+class CompetencyDetailOut(CompetencyOut):
+    collections: list["CompetencyCollectionOut"] = []
+
+
 class CompetencyProfessionOut(BaseModel):
     profession_id: int
     profession_name: str
-    profession_group_id: int
-    link_type: ProfessionCompetencyLinkType = Field(
+    profession_group_id: Optional[int]
+    profession_group_name: Optional[str] = None
+    link_types: list[ProfessionCompetencyLinkType] = Field(
         description=(
-            "Valid values: esco_essential, esco_optional, job_derived, manual. "
-            "Indicates how this profession is linked to the competency."
+            "All link types between this profession and the competency. "
+            "Values: esco_essential, esco_optional, job_derived, manual."
         )
     )
-    weight: Optional[float] = None
+    weight: float
+    aliases: list[str] = []
 
 
 class CompetencyLabelCreate(BaseModel):
@@ -300,6 +325,16 @@ class ProfessionCompetencyCreate(BaseModel):
             }
         }
     }
+
+
+class ProfessionCompetencyDetailOut(BaseModel):
+    competency_id: int
+    competency_name: str
+    competency_type: Optional[str] = None
+    aliases: list[str] = []
+    group_names: list[str] = []
+    link_types: list[ProfessionCompetencyLinkType]
+    weight: float
 
 
 class ProfessionCompetencyUpdate(BaseModel):

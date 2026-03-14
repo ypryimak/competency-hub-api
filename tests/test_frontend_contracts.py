@@ -1,11 +1,15 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pytest
+
+from app.core.enums import ModelStatus
 from app.schemas.activity import ActivityLogOut
 from app.schemas.auth import UserOut
 from app.schemas.candidate_selection import CandidateOut, SelectionOut
-from app.schemas.competency_model import CompetencyModelOut
+from app.schemas.competency_model import CompetencyModelOut, CompetencyModelUpdate
 from app.services.candidate_selection_service import CandidateSelectionService
 from app.services.competency_model_service import CompetencyModelService
 
@@ -205,3 +209,31 @@ def test_activity_log_out_nullable_values() -> None:
 
     assert payload["old_value"] is None
     assert payload["new_value"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_model_allows_clearing_competency_filters() -> None:
+    service = CompetencyModelService()
+    model = SimpleNamespace(
+        id=10,
+        user_id=1,
+        status=ModelStatus.COMPLETED,
+        name="Model",
+        profession_id=3,
+        evaluation_deadline=None,
+        min_competency_weight=0.6,
+        max_competency_rank=5,
+    )
+    db = SimpleNamespace(flush=AsyncMock(), refresh=AsyncMock())
+    service._get_model_orm = AsyncMock(return_value=model)
+    payload = CompetencyModelUpdate(
+        min_competency_weight=None,
+        max_competency_rank=None,
+    )
+
+    await service.update_model(db, 10, 1, payload)
+
+    assert model.min_competency_weight is None
+    assert model.max_competency_rank is None
+    db.flush.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(model)

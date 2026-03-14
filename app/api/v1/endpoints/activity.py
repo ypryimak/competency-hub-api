@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies import get_current_user
@@ -16,7 +16,7 @@ async def list_activity(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Останні події для поточного користувача."""
+    """Return the most recent activity items for the current user."""
     result = await db.execute(
         select(ActivityLog)
         .where(ActivityLog.user_id == current_user.id)

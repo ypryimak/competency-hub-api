@@ -1,11 +1,22 @@
+<!DOCTYPE html>
 <html>
-  <body style="font-family: Arial, sans-serif; color: #1f2937;">
-    <p>Hello {{ recipient_name }},</p>
-    <p>{{ expert_name }} ({{ expert_email }}) accepted the invite for your {{ resource_kind }} <strong>{{ resource_name }}</strong>.</p>
-    {% if action_url %}
-    <p><a href="{{ action_url }}">View in CompetencyHub</a></p>
-    {% elif app_url %}
-    <p><a href="{{ app_url }}">Open CompetencyHub</a></p>
-    {% endif %}
-  </body>
+<head><meta charset="UTF-8"><title>Invite Accepted</title></head>
+<body style="font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 32px;">
+<div style="max-width: 560px; margin: 0 auto; background: white; border-radius: 8px; padding: 32px; border: 1px solid #e2e8f0;">
+  <h1 style="color: #1e1b4b; font-size: 20px; margin-top: 0; margin-bottom: 8px;">Invite Accepted</h1>
+  <p style="color: #475569;">Hi {{ recipient_name }},</p>
+  <p style="color: #475569;">{{ expert_name }} ({{ expert_email }}) has accepted your invitation for {{ resource_kind }} <strong>{{ resource_name }}</strong>.</p>
+  <p style="color: #475569;">They can now access their assignment and begin their work.</p>
+  {% if action_url %}
+  <p style="margin: 24px 0;">
+    <a href="{{ action_url }}" style="display: inline-block; background: #4f46e5; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">View in CompetencyHub</a>
+  </p>
+  {% elif app_url %}
+  <p style="margin: 24px 0;">
+    <a href="{{ app_url }}" style="display: inline-block; background: #4f46e5; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">View in CompetencyHub</a>
+  </p>
+  {% endif %}
+  <p style="color: #64748b; font-size: 13px; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">You're receiving this as the owner of this resource.</p>
+</div>
+</body>
 </html>
