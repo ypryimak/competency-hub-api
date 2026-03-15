@@ -102,6 +102,14 @@ def main() -> None:
 
     print("\n[3] Competency groups and competencies")
     competency_group = post(token, "/competency-groups", {"name": f"[TEST {marker}] Engineering"})
+    competency_group_child = post(
+        token,
+        "/competency-groups",
+        {
+            "name": f"[TEST {marker}] Backend",
+            "parent_group_id": competency_group["id"],
+        },
+    )
     get(token, "/competency-groups")
     get(token, f"/competency-groups/{competency_group['id']}")
     competency_group = patch(
@@ -153,7 +161,7 @@ def main() -> None:
     post(
         token,
         f"/competencies/{competencies[0]['id']}/groups",
-        {"group_id": competency_group["id"]},
+        {"group_id": competency_group_child["id"]},
     )
     get(token, f"/competencies/{competencies[0]['id']}/groups")
 
@@ -197,7 +205,7 @@ def main() -> None:
         200,
     )
     assert any(item["id"] == competencies[0]["id"] for item in filtered_by_group["items"]), (
-        "Competency with group membership must appear in group_id filter results"
+        "Competency in a descendant group must appear in ancestor group filter results"
     )
     filtered_by_collection = ok(
         f"GET /competencies?collection_id={competency_collection['id']}",
@@ -387,12 +395,13 @@ def main() -> None:
     delete(token, f"/professions/{similar_profession['id']}/competencies/{competencies[0]['id']}/manual")
     delete(token, f"/professions/{similar_profession['id']}/competencies/{competencies[1]['id']}/manual")
     delete(token, f"/professions/{profession['id']}/competencies/{competencies[0]['id']}/manual")
-    delete(token, f"/competencies/{competencies[0]['id']}/groups/{competency_group['id']}")
+    delete(token, f"/competencies/{competencies[0]['id']}/groups/{competency_group_child['id']}")
     delete(token, f"/competencies/{competencies[0]['id']}/labels/{competency_label['id']}")
     delete(token, f"/professions/{profession['id']}/labels/{profession_label['id']}")
     delete(token, f"/professions/{similar_profession['id']}")
     for competency in competencies:
         delete(token, f"/competencies/{competency['id']}")
+    delete(token, f"/competency-groups/{competency_group_child['id']}")
     delete(token, f"/competency-groups/{competency_group['id']}")
     delete(token, f"/professions/{profession['id']}")
     delete(token, f"/profession-groups/{profession_group['id']}")

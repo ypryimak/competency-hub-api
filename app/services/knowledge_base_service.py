@@ -487,10 +487,11 @@ class KnowledgeBaseService:
             .order_by(Competency.name)
         )
         if group_id is not None:
+            descendant_ids = await self._get_competency_group_descendant_ids(db, group_id)
             q = q.join(
                 CompetencyGroupMember,
                 (CompetencyGroupMember.competency_id == Competency.id)
-                & (CompetencyGroupMember.group_id == group_id),
+                & (CompetencyGroupMember.group_id.in_(descendant_ids)),
             )
         if collection_id is not None:
             q = q.join(
@@ -526,7 +527,8 @@ class KnowledgeBaseService:
         collection_id: int | None = None,
     ) -> tuple[list[dict], int]:
         base_query = select(Competency.id)
-        base_query = self._apply_competency_list_filters(
+        base_query = await self._apply_competency_list_filters(
+            db,
             base_query,
             search=search,
             competency_type=competency_type,
@@ -1453,8 +1455,9 @@ class KnowledgeBaseService:
             query = query.where(Profession.profession_group_id.in_(descendant_ids))
         return query
 
-    def _apply_competency_list_filters(
+    async def _apply_competency_list_filters(
         self,
+        db: AsyncSession,
         query,
         *,
         search: str | None,
@@ -1485,11 +1488,12 @@ class KnowledgeBaseService:
             else:
                 query = query.where(Competency.competency_type == competency_type)
         if group_id is not None:
+            descendant_ids = await self._get_competency_group_descendant_ids(db, group_id)
             query = query.where(
                 select(CompetencyGroupMember.group_id)
                 .where(
                     CompetencyGroupMember.competency_id == Competency.id,
-                    CompetencyGroupMember.group_id == group_id,
+                    CompetencyGroupMember.group_id.in_(descendant_ids),
                 )
                 .exists()
             )
@@ -1510,6 +1514,28 @@ class KnowledgeBaseService:
         group_id: int,
     ) -> list[int]:
         result = await db.execute(select(ProfessionGroup.id, ProfessionGroup.parent_group_id))
+        children_by_parent: dict[int | None, list[int]] = {}
+        for row in result.all():
+            children_by_parent.setdefault(row.parent_group_id, []).append(row.id)
+
+        descendant_ids: list[int] = []
+        queue = [group_id]
+        seen: set[int] = set()
+        while queue:
+            current = queue.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            descendant_ids.append(current)
+            queue.extend(children_by_parent.get(current, []))
+        return descendant_ids
+
+    async def _get_competency_group_descendant_ids(
+        self,
+        db: AsyncSession,
+        group_id: int,
+    ) -> list[int]:
+        result = await db.execute(select(CompetencyGroup.id, CompetencyGroup.parent_group_id))
         children_by_parent: dict[int | None, list[int]] = {}
         for row in result.all():
             children_by_parent.setdefault(row.parent_group_id, []).append(row.id)
