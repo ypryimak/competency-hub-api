@@ -10,10 +10,12 @@ from pydantic import ValidationError
 from app.core.enums import ModelStatus
 from app.schemas.activity import ActivityLogOut
 from app.schemas.auth import UserOut, UserRegister
-from app.schemas.candidate_selection import CandidateOut, SelectionOut
+from app.schemas.candidate_selection import CandidateOut, ExpertCandidateScoreOut, SelectionOut
 from app.schemas.competency_model import (
     CompetencyModelOut,
     CompetencyModelUpdate,
+    ExpertAlternativeRankOut,
+    ExpertCriterionRankOut,
     ExpertInviteCreate,
     ModelSubmitRequest,
 )
@@ -147,6 +149,69 @@ def test_selection_and_candidate_serializers_include_frontend_metadata() -> None
     assert selection_payload["status_code"] == 1
     assert selection_payload["status"] == "draft"
     assert selection_payload["experts"][0]["user"]["email"] == "selection-expert@example.com"
+
+
+@pytest.mark.asyncio
+async def test_build_model_detail_includes_current_expert_ranks() -> None:
+    service = CompetencyModelService()
+    service._get_users_by_emails = AsyncMock(return_value={})
+    model = SimpleNamespace(
+        id=10,
+        user_id=2,
+        name="Model",
+        profession_id=4,
+        profession=SimpleNamespace(name="Data Analyst"),
+        min_competency_weight=None,
+        max_competency_rank=None,
+        evaluation_deadline=None,
+        status=1,
+        created_at=datetime.now(timezone.utc),
+        experts=[],
+        expert_invites=[],
+        criteria=[],
+        custom_competencies=[],
+        alternatives=[],
+    )
+
+    payload = await service._build_model_detail(
+        SimpleNamespace(),
+        model,
+        current_criterion_ranks=[ExpertCriterionRankOut(criterion_id=5, rank=1)],
+        current_alternative_ranks=[ExpertAlternativeRankOut(alternative_id=9, criterion_id=5, rank=2)],
+    )
+
+    dumped = payload.model_dump(mode="json")
+
+    assert dumped["profession_name"] == "Data Analyst"
+    assert dumped["current_criterion_ranks"] == [{"criterion_id": 5, "rank": 1}]
+    assert dumped["current_alternative_ranks"] == [
+        {"alternative_id": 9, "criterion_id": 5, "rank": 2}
+    ]
+
+
+def test_selection_serializer_includes_current_scores() -> None:
+    service = CandidateSelectionService()
+    selection = SimpleNamespace(
+        id=9,
+        user_id=2,
+        model_id=12,
+        evaluation_deadline=None,
+        status=1,
+        created_at=datetime.now(timezone.utc),
+        candidates=[],
+        experts=[],
+        criteria=[],
+        expert_invites=[],
+    )
+
+    payload = service._serialize_selection_detail(
+        selection,
+        current_scores=[ExpertCandidateScoreOut(candidate_id=21, selection_criterion_id=8, score=4)],
+    ).model_dump(mode="json")
+
+    assert payload["current_scores"] == [
+        {"candidate_id": 21, "selection_criterion_id": 8, "score": 4}
+    ]
 
 
 def test_user_out_exposes_position_and_company() -> None:

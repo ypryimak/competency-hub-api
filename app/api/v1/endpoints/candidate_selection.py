@@ -18,6 +18,7 @@ from app.schemas.candidate_selection import (
     CandidateOut,
     CandidateSelectionOut,
     CandidateWithCompetencies,
+    ExpertSelectionDetail,
     ExpertScoringStatus,
     ExpertScoringSubmit,
     SelectionCreate,
@@ -333,6 +334,17 @@ async def expert_list_selections(
     current_user: User = Depends(get_current_user),
 ):
     return await candidate_selection_service.list_selections_as_expert(db, current_user.id)
+
+
+@router.get("/expert/selections/{selection_id}", response_model=ExpertSelectionDetail, tags=["Expert"])
+async def expert_get_selection(
+    selection_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await candidate_selection_service.get_selection_as_expert(
+        db, selection_id, current_user.id
+    )
 
 
 @router.get("/expert/selection-invites", response_model=list[SelectionExpertInviteOut], tags=["Expert"])

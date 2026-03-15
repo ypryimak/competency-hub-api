@@ -209,6 +209,22 @@ class ExpertEvaluationStatus(BaseModel):
     is_complete: bool
 
 
+class ExpertCriterionRankOut(BaseModel):
+    criterion_id: int
+    rank: int
+
+
+class ExpertAlternativeRankOut(BaseModel):
+    alternative_id: int
+    criterion_id: int
+    rank: int
+
+
+class ExpertCompetencyModelDetail(CompetencyModelDetail):
+    current_criterion_ranks: list[ExpertCriterionRankOut] = []
+    current_alternative_ranks: list[ExpertAlternativeRankOut] = []
+
+
 class OPAResult(BaseModel):
     expert_weights: dict[int, float]
     criterion_weights: dict[int, float]

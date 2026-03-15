@@ -20,6 +20,7 @@ from app.schemas.competency_model import (
     CompetencyModelDetail,
     CompetencyModelOut,
     CompetencyModelUpdate,
+    ExpertCompetencyModelDetail,
     CriterionCreate,
     CriterionOut,
     CriterionUpdate,
@@ -444,6 +445,19 @@ async def expert_list_models(
 ):
     """List models where the current user is an active expert."""
     return await competency_model_service.list_models_as_expert(db, current_user.id)
+
+
+@router.get(
+    "/expert/competency-models/{model_id}",
+    response_model=ExpertCompetencyModelDetail,
+    tags=["Expert"],
+)
+async def expert_get_model(
+    model_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await competency_model_service.get_model_as_expert(db, model_id, current_user.id)
 
 
 @router.get(

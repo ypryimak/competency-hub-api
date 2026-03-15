@@ -35,6 +35,9 @@ from app.schemas.competency_model import (
     CustomCompetencyCreate,
     CustomCompetencyOut,
     CustomCompetencyUpdate,
+    ExpertAlternativeRankOut,
+    ExpertCompetencyModelDetail,
+    ExpertCriterionRankOut,
     ExpertInviteCreate,
     ExpertInviteOut,
     ExpertInviteUpdate,
@@ -75,55 +78,43 @@ class CompetencyModelService:
         return result.scalars().all()
 
     async def get_model(self, db: AsyncSession, model_id: int, user_id: int) -> CompetencyModelDetail:
-        result = await db.execute(
-            select(CompetencyModel)
-            .where(CompetencyModel.id == model_id, CompetencyModel.user_id == user_id)
-            .options(
-                selectinload(CompetencyModel.profession),
-                selectinload(CompetencyModel.experts).selectinload(ModelExpert.user),
-                selectinload(CompetencyModel.expert_invites),
-                selectinload(CompetencyModel.criteria),
-                selectinload(CompetencyModel.custom_competencies),
-                selectinload(CompetencyModel.alternatives).selectinload(Alternative.competency),
-                selectinload(CompetencyModel.alternatives).selectinload(Alternative.custom_competency),
-            )
-        )
-        model = result.scalar_one_or_none()
-        if not model:
-            raise HTTPException(status_code=404, detail="Competency model not found")
+        model = await self._get_model_orm(db, model_id, user_id)
+        return await self._build_model_detail(db, model)
 
-        invite_users = await self._get_users_by_emails(
+    async def get_model_as_expert(
+        self, db: AsyncSession, model_id: int, user_id: int
+    ) -> ExpertCompetencyModelDetail:
+        expert = await self._get_expert_by_user(db, model_id, user_id)
+        model = await self._get_model_with_relations(db, model_id)
+        criterion_ranks = (
+            await db.execute(
+                select(CriterionRank)
+                .where(CriterionRank.expert_id == expert.id)
+                .order_by(CriterionRank.rank, CriterionRank.criterion_id)
+            )
+        ).scalars().all()
+        alternative_ranks = (
+            await db.execute(
+                select(AlternativeRank)
+                .where(AlternativeRank.expert_id == expert.id)
+                .order_by(AlternativeRank.criterion_id, AlternativeRank.rank, AlternativeRank.alternative_id)
+            )
+        ).scalars().all()
+        return await self._build_model_detail(
             db,
-            [invite.email for invite in model.expert_invites if invite.accepted_by_user_id is None],
-        )
-        pending_invites = [
-            self._serialize_expert_invite(
-                invite,
-                model_name=model.name,
-                profession_id=model.profession_id,
-                status="added" if model.status == ModelStatus.DRAFT else "invited",
-                matched_user=invite_users.get(invite.email.strip().lower()),
-            )
-            for invite in model.expert_invites
-            if invite.accepted_by_user_id is None
-        ]
-
-        return CompetencyModelDetail(
-            id=model.id,
-            user_id=model.user_id,
-            name=model.name,
-            profession_id=model.profession_id,
-            profession_name=model.profession.name if model.profession else None,
-            min_competency_weight=model.min_competency_weight,
-            max_competency_rank=model.max_competency_rank,
-            evaluation_deadline=model.evaluation_deadline,
-            status_code=model.status,
-            created_at=model.created_at,
-            experts=[self._serialize_model_expert(item) for item in model.experts],
-            expert_invites=pending_invites,
-            criteria=model.criteria,
-            custom_competencies=[CustomCompetencyOut.model_validate(item) for item in model.custom_competencies],
-            alternatives=[self._serialize_alternative(alt) for alt in model.alternatives],
+            model,
+            current_criterion_ranks=[
+                ExpertCriterionRankOut(criterion_id=item.criterion_id, rank=item.rank)
+                for item in criterion_ranks
+            ],
+            current_alternative_ranks=[
+                ExpertAlternativeRankOut(
+                    alternative_id=item.alternative_id,
+                    criterion_id=item.criterion_id,
+                    rank=item.rank,
+                )
+                for item in alternative_ranks
+            ],
         )
 
     async def create_model(
@@ -931,10 +922,17 @@ class CompetencyModelService:
             raise HTTPException(status_code=400, detail=f"Operation is unavailable in status {current}")
 
     async def _get_model_orm(self, db: AsyncSession, model_id: int, user_id: int) -> CompetencyModel:
+        model = await self._get_model_with_relations(db, model_id)
+        if model.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Competency model not found")
+        return model
+
+    async def _get_model_with_relations(self, db: AsyncSession, model_id: int) -> CompetencyModel:
         result = await db.execute(
             select(CompetencyModel)
-            .where(CompetencyModel.id == model_id, CompetencyModel.user_id == user_id)
+            .where(CompetencyModel.id == model_id)
             .options(
+                selectinload(CompetencyModel.profession),
                 selectinload(CompetencyModel.experts).selectinload(ModelExpert.user),
                 selectinload(CompetencyModel.expert_invites),
                 selectinload(CompetencyModel.criteria),
@@ -1235,6 +1233,49 @@ class CompetencyModelService:
             .order_by(CompetencyModel.evaluation_deadline)
         )
         return result.scalars().all()
+
+    async def _build_model_detail(
+        self,
+        db: AsyncSession,
+        model: CompetencyModel,
+        current_criterion_ranks: list[ExpertCriterionRankOut] | None = None,
+        current_alternative_ranks: list[ExpertAlternativeRankOut] | None = None,
+    ) -> ExpertCompetencyModelDetail:
+        invite_users = await self._get_users_by_emails(
+            db,
+            [invite.email for invite in model.expert_invites if invite.accepted_by_user_id is None],
+        )
+        pending_invites = [
+            self._serialize_expert_invite(
+                invite,
+                model_name=model.name,
+                profession_id=model.profession_id,
+                status="added" if model.status == ModelStatus.DRAFT else "invited",
+                matched_user=invite_users.get(invite.email.strip().lower()),
+            )
+            for invite in model.expert_invites
+            if invite.accepted_by_user_id is None
+        ]
+
+        return ExpertCompetencyModelDetail(
+            id=model.id,
+            user_id=model.user_id,
+            name=model.name,
+            profession_id=model.profession_id,
+            profession_name=model.profession.name if model.profession else None,
+            min_competency_weight=model.min_competency_weight,
+            max_competency_rank=model.max_competency_rank,
+            evaluation_deadline=model.evaluation_deadline,
+            status_code=model.status,
+            created_at=model.created_at,
+            experts=[self._serialize_model_expert(item) for item in model.experts],
+            expert_invites=pending_invites,
+            criteria=model.criteria,
+            custom_competencies=[CustomCompetencyOut.model_validate(item) for item in model.custom_competencies],
+            alternatives=[self._serialize_alternative(alt) for alt in model.alternatives],
+            current_criterion_ranks=current_criterion_ranks or [],
+            current_alternative_ranks=current_alternative_ranks or [],
+        )
 
 
 competency_model_service = CompetencyModelService()

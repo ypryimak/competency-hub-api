@@ -31,6 +31,8 @@ from app.schemas.candidate_selection import (
     CandidateCreate,
     CandidateCVSignedUrl,
     CandidateOut,
+    ExpertCandidateScoreOut,
+    ExpertSelectionDetail,
     CandidateSelectionOut,
     CandidateWithCompetencies,
     CandidateRankOut,
@@ -70,6 +72,30 @@ class CandidateSelectionService:
     async def get_selection(self, db: AsyncSession, selection_id: int, user_id: int) -> SelectionDetail:
         selection = await self._get_selection_orm(db, selection_id, user_id)
         return self._serialize_selection_detail(selection)
+
+    async def get_selection_as_expert(
+        self, db: AsyncSession, selection_id: int, user_id: int
+    ) -> ExpertSelectionDetail:
+        expert = await self._get_expert_by_user(db, selection_id, user_id)
+        selection = await self._get_selection_with_relations(db, selection_id)
+        scores = (
+            await db.execute(
+                select(CandidateScore)
+                .where(CandidateScore.expert_id == expert.id)
+                .order_by(CandidateScore.candidate_id, CandidateScore.selection_criterion_id)
+            )
+        ).scalars().all()
+        return self._serialize_selection_detail(
+            selection,
+            current_scores=[
+                ExpertCandidateScoreOut(
+                    candidate_id=item.candidate_id,
+                    selection_criterion_id=item.selection_criterion_id,
+                    score=int(item.score),
+                )
+                for item in scores
+            ],
+        )
 
     async def create_selection(self, db: AsyncSession, data: SelectionCreate, user_id: int) -> Selection:
         model = (
@@ -749,9 +775,17 @@ class CandidateSelectionService:
     async def _get_selection_orm(
         self, db: AsyncSession, selection_id: int, user_id: int
     ) -> Selection:
+        selection = await self._get_selection_with_relations(db, selection_id)
+        if selection.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Selection not found")
+        return selection
+
+    async def _get_selection_with_relations(
+        self, db: AsyncSession, selection_id: int
+    ) -> Selection:
         result = await db.execute(
             select(Selection)
-            .where(Selection.id == selection_id, Selection.user_id == user_id)
+            .where(Selection.id == selection_id)
             .options(
                 selectinload(Selection.candidates).selectinload(CandidateSelection.candidate),
                 selectinload(Selection.experts).selectinload(SelectionExpert.user),
@@ -951,8 +985,12 @@ class CandidateSelectionService:
         if result.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="Pending invite for this email already exists")
 
-    def _serialize_selection_detail(self, selection: Selection) -> SelectionDetail:
-        return SelectionDetail(
+    def _serialize_selection_detail(
+        self,
+        selection: Selection,
+        current_scores: list[ExpertCandidateScoreOut] | None = None,
+    ) -> ExpertSelectionDetail:
+        return ExpertSelectionDetail(
             id=selection.id,
             user_id=selection.user_id,
             model_id=selection.model_id,
@@ -973,6 +1011,7 @@ class CandidateSelectionService:
             experts=[self._serialize_selection_expert(item) for item in selection.experts],
             criteria=[SelectionCriterionOut.model_validate(item) for item in selection.criteria],
             expert_invites=[self._serialize_expert_invite(item) for item in selection.expert_invites],
+            current_scores=current_scores or [],
         )
 
     def _serialize_candidate(self, candidate: Candidate) -> CandidateWithCompetencies:

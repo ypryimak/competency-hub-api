@@ -165,6 +165,16 @@ class ExpertScoringStatus(BaseModel):
     is_complete: bool
 
 
+class ExpertCandidateScoreOut(BaseModel):
+    candidate_id: int
+    selection_criterion_id: int
+    score: int
+
+
+class ExpertSelectionDetail(SelectionDetail):
+    current_scores: list[ExpertCandidateScoreOut] = []
+
+
 class CandidateRankOut(BaseModel):
     candidate_id: int
     candidate_name: Optional[str]
