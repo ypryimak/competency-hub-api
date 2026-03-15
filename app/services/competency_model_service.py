@@ -1228,7 +1228,9 @@ class CompetencyModelService:
             .join(ModelExpert, ModelExpert.model_id == CompetencyModel.id)
             .where(
                 ModelExpert.user_id == user_id,
-                CompetencyModel.status == ModelStatus.EXPERT_EVALUATION,
+                CompetencyModel.status.in_(
+                    (ModelStatus.EXPERT_EVALUATION, ModelStatus.COMPLETED)
+                ),
             )
             .order_by(CompetencyModel.evaluation_deadline)
         )

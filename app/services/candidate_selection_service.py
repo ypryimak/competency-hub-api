@@ -536,7 +536,9 @@ class CandidateSelectionService:
             .join(SelectionExpert, SelectionExpert.selection_id == Selection.id)
             .where(
                 SelectionExpert.user_id == user_id,
-                Selection.status == SelectionStatus.EXPERT_EVALUATION,
+                Selection.status.in_(
+                    (SelectionStatus.EXPERT_EVALUATION, SelectionStatus.COMPLETED)
+                ),
             )
             .order_by(Selection.evaluation_deadline)
         )

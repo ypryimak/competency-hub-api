@@ -201,7 +201,7 @@ class KnowledgeBaseService:
         self,
         db: AsyncSession,
         profession_id: int,
-        limit: int = 5,
+        limit: int = 6,
     ) -> list[SimilarProfessionOut]:
         target = await self.get_profession(db, profession_id)
         target_competency_ids = set(
