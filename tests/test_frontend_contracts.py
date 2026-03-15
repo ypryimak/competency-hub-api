@@ -1,10 +1,11 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.core.enums import ModelStatus
 from app.schemas.activity import ActivityLogOut
@@ -221,7 +222,7 @@ def test_activity_log_out_nullable_values() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_model_allows_clearing_competency_filters() -> None:
+async def test_update_model_rejects_clearing_all_competency_filters_after_submission() -> None:
     service = CompetencyModelService()
     model = SimpleNamespace(
         id=10,
@@ -240,12 +241,76 @@ async def test_update_model_allows_clearing_competency_filters() -> None:
         max_competency_rank=None,
     )
 
+    with pytest.raises(HTTPException) as exc_info:
+        await service.update_model(db, 10, 1, payload)
+
+    assert exc_info.value.detail == "At least one competency filter is required: minimum weight or maximum rank"
+    db.flush.assert_not_awaited()
+    db.refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_model_allows_clearing_one_filter_while_preserving_the_other() -> None:
+    service = CompetencyModelService()
+    model = SimpleNamespace(
+        id=10,
+        user_id=1,
+        status=ModelStatus.EXPERT_EVALUATION,
+        name="Model",
+        profession_id=3,
+        evaluation_deadline=None,
+        min_competency_weight=0.6,
+        max_competency_rank=5,
+    )
+    db = SimpleNamespace(flush=AsyncMock(), refresh=AsyncMock())
+    service._get_model_orm = AsyncMock(return_value=model)
+    payload = CompetencyModelUpdate(
+        min_competency_weight=None,
+    )
+
     await service.update_model(db, 10, 1, payload)
 
     assert model.min_competency_weight is None
-    assert model.max_competency_rank is None
+    assert model.max_competency_rank == 5
     db.flush.assert_awaited_once()
     db.refresh.assert_awaited_once_with(model)
+
+
+@pytest.mark.asyncio
+async def test_update_model_rejects_past_deadline() -> None:
+    service = CompetencyModelService()
+    model = SimpleNamespace(
+        id=10,
+        user_id=1,
+        status=ModelStatus.EXPERT_EVALUATION,
+        name="Model",
+        profession_id=3,
+        evaluation_deadline=datetime.now(timezone.utc) + timedelta(days=2),
+        min_competency_weight=0.6,
+        max_competency_rank=5,
+    )
+    db = SimpleNamespace(flush=AsyncMock(), refresh=AsyncMock())
+    service._get_model_orm = AsyncMock(return_value=model)
+    payload = CompetencyModelUpdate(
+        evaluation_deadline=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.update_model(db, 10, 1, payload)
+
+    assert exc_info.value.detail == "Evaluation deadline must be tomorrow or later"
+    db.flush.assert_not_awaited()
+    db.refresh.assert_not_awaited()
+
+
+def test_submit_model_requires_tomorrow_or_later_deadline() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        ModelSubmitRequest(
+            min_competency_weight=0.5,
+            evaluation_deadline=datetime.now(timezone.utc) - timedelta(days=1),
+        )
+
+    assert "Evaluation deadline must be tomorrow or later" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -358,13 +423,76 @@ async def test_submit_model_sends_pending_invites(monkeypatch: pytest.MonkeyPatc
         7,
         ModelSubmitRequest(
             min_competency_weight=0.5,
-            evaluation_deadline=datetime.now(timezone.utc),
+            evaluation_deadline=datetime.now(timezone.utc) + timedelta(days=1),
         ),
     )
 
     assert model.status == ModelStatus.EXPERT_EVALUATION
     send_invite.assert_awaited_once_with(db, 51)
     log_activity.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_list_pending_invites_for_user_excludes_draft_models() -> None:
+    service = CompetencyModelService()
+    user = SimpleNamespace(id=7, email="Expert@example.com", name="Existing Expert")
+    active_model = SimpleNamespace(id=11, name="Active model", profession_id=3)
+    draft_model = SimpleNamespace(id=12, name="Draft model", profession_id=4)
+    active_invite = SimpleNamespace(
+        id=51,
+        model_id=11,
+        email="expert@example.com",
+        rank=2,
+        accepted_by_user_id=None,
+        token="active-token",
+        created_at=datetime.now(timezone.utc),
+    )
+    draft_invite = SimpleNamespace(
+        id=52,
+        model_id=12,
+        email="expert@example.com",
+        rank=3,
+        accepted_by_user_id=None,
+        token="draft-token",
+        created_at=datetime.now(timezone.utc),
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                all=lambda: [
+                    (active_invite, active_model),
+                ]
+            )
+        )
+    )
+    service._get_user = AsyncMock(return_value=user)
+
+    invites = await service.list_pending_invites_for_user(db, 7)
+
+    assert [invite.id for invite in invites] == [51]
+    assert all(invite.model_id != 12 for invite in invites)
+
+
+def test_template_renderer_renders_cancelled_deadline_email_without_reopen_copy() -> None:
+    from app.services.email_service import EmailTemplateRenderer
+    from app.core.enums import EmailTemplateKey
+
+    renderer = EmailTemplateRenderer()
+
+    rendered = renderer.render(
+        EmailTemplateKey.OWNER_DEADLINE_REACHED_CANCELLED,
+        {
+            "recipient_name": "owner@example.com",
+            "resource_kind": "competency model",
+            "resource_name": "Backend Engineer Model",
+            "action_url": "http://localhost:3000/models/1",
+            "app_url": "http://localhost:3000",
+        },
+    )
+
+    assert "re-opening" not in rendered.html
+    assert "re-open" not in rendered.text
+    assert "create a new assessment later" in rendered.text
 
 
 @pytest.mark.asyncio

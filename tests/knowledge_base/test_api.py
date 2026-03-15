@@ -75,7 +75,7 @@ def main() -> None:
         {"label": f"[TEST {marker}] Platform DevOps", "label_type": "alternative", "lang": "en"},
     )
     get(token, f"/professions/{profession['id']}/labels")
-    patch(
+    profession_label = patch(
         token,
         f"/professions/{profession['id']}/labels/{profession_label['id']}",
         {"label": f"[TEST {marker}] Platform DevOps Updated"},
@@ -214,7 +214,10 @@ def main() -> None:
     # FEAT-024: aliases field in competencies list (after label is created)
     comp_list_with_aliases = ok(
         "GET /competencies (aliases check)",
-        requests.get(f"{BASE_URL}/competencies?limit=100", headers=auth_headers(token)),
+        requests.get(
+            f"{BASE_URL}/competencies?search={requests.utils.quote(f'[TEST {marker}] Python Updated')}",
+            headers=auth_headers(token),
+        ),
         200,
     )
     test_comp_item = next(
@@ -235,7 +238,10 @@ def main() -> None:
     # FEAT-026: aliases field in professions list (after profession label is created)
     prof_list_with_aliases = ok(
         "GET /professions (aliases check)",
-        requests.get(f"{BASE_URL}/professions?limit=100", headers=auth_headers(token)),
+        requests.get(
+            f"{BASE_URL}/professions?search={requests.utils.quote(f'[TEST {marker}] Platform Engineer Updated')}",
+            headers=auth_headers(token),
+        ),
         200,
     )
     test_prof_item = next(
@@ -307,6 +313,11 @@ def main() -> None:
     similar = get(token, f"/professions/{profession['id']}/similar")
     assert similar, "Expected similar professions for the seeded profession"
     assert any(item["id"] == similar_profession["id"] for item in similar), "Expected related profession in similar list"
+    first_similar = similar[0]
+    assert "overlap_ratio" in first_similar, "Similar profession item must include 'overlap_ratio'"
+    assert "same_group" in first_similar, "Similar profession item must include 'same_group'"
+    assert "same_parent" in first_similar, "Similar profession item must include 'same_parent'"
+    assert "direct_hierarchy_match" in first_similar, "Similar profession item must include 'direct_hierarchy_match'"
 
     jobs = [
         post(

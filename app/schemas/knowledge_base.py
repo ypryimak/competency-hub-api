@@ -92,7 +92,11 @@ class SimilarProfessionOut(BaseModel):
     profession_group_id: int
     parent_profession_id: Optional[int] = None
     similarity_score: float
+    overlap_ratio: float
     shared_competency_count: int
+    same_group: bool
+    same_parent: bool
+    direct_hierarchy_match: bool
 
 
 class ProfessionLabelCreate(BaseModel):

@@ -269,16 +269,23 @@ class KnowledgeBaseService:
             shared_count = len(target_competency_ids & candidate_competencies)
             union_count = len(target_competency_ids | candidate_competencies)
             overlap_score = (shared_count / union_count) if union_count else 0.0
-            same_group_bonus = 1.0 if profession.profession_group_id == target.profession_group_id else 0.0
+            same_group = profession.profession_group_id == target.profession_group_id
+            same_group_bonus = 1.0 if same_group else 0.0
+            same_parent = (
+                target.parent_profession_id is not None
+                and profession.parent_profession_id == target.parent_profession_id
+            )
             same_parent_bonus = (
                 2.0
-                if target.parent_profession_id is not None
-                and profession.parent_profession_id == target.parent_profession_id
+                if same_parent
                 else 0.0
+            )
+            direct_hierarchy_match = (
+                profession.parent_profession_id == target.id or target.parent_profession_id == profession.id
             )
             direct_hierarchy_bonus = (
                 1.5
-                if profession.parent_profession_id == target.id or target.parent_profession_id == profession.id
+                if direct_hierarchy_match
                 else 0.0
             )
             score = round(overlap_score * 10 + same_group_bonus + same_parent_bonus + direct_hierarchy_bonus, 4)
@@ -292,7 +299,11 @@ class KnowledgeBaseService:
                     profession_group_id=profession.profession_group_id,
                     parent_profession_id=profession.parent_profession_id,
                     similarity_score=score,
+                    overlap_ratio=round(overlap_score, 4),
                     shared_competency_count=shared_count,
+                    same_group=same_group,
+                    same_parent=same_parent,
+                    direct_hierarchy_match=direct_hierarchy_match,
                 )
             )
 

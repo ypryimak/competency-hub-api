@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, Field, computed_field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, computed_field, field_validator, model_validator
 
 from app.core.enums import WorkflowStatusName, get_workflow_status_name
 from app.schemas.common import UserSummaryOut
@@ -221,6 +221,21 @@ class ModelSubmitRequest(BaseModel):
     min_competency_weight: Optional[float] = None
     max_competency_rank: Optional[int] = None
     evaluation_deadline: Optional[datetime] = None
+
+    @field_validator("evaluation_deadline")
+    @classmethod
+    def require_tomorrow_or_later_deadline(
+        cls, value: Optional[datetime]
+    ) -> Optional[datetime]:
+        if value is None:
+            raise ValueError("Evaluation deadline is required")
+
+        now = datetime.now(value.tzinfo or timezone.utc)
+        tomorrow = (now + timedelta(days=1)).date()
+        if value.date() < tomorrow:
+            raise ValueError("Evaluation deadline must be tomorrow or later")
+
+        return value
 
     @model_validator(mode="after")
     def at_least_one_filter(self) -> "ModelSubmitRequest":

@@ -1,6 +1,6 @@
 import secrets
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from fastapi import HTTPException, status
@@ -164,6 +164,7 @@ class CompetencyModelService:
 
         if is_draft or is_expert_eval:
             if "evaluation_deadline" in updated_fields:
+                self._validate_evaluation_deadline(data.evaluation_deadline)
                 model.evaluation_deadline = data.evaluation_deadline
 
         if is_draft or is_expert_eval or is_completed:
@@ -171,6 +172,19 @@ class CompetencyModelService:
                 model.min_competency_weight = data.min_competency_weight
             if "max_competency_rank" in updated_fields:
                 model.max_competency_rank = data.max_competency_rank
+            if (
+                (is_expert_eval or is_completed)
+                and (
+                    "min_competency_weight" in updated_fields
+                    or "max_competency_rank" in updated_fields
+                )
+                and model.min_competency_weight is None
+                and model.max_competency_rank is None
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="At least one competency filter is required: minimum weight or maximum rank",
+                )
 
         await db.flush()
         await db.refresh(model)
@@ -518,6 +532,7 @@ class CompetencyModelService:
             raise HTTPException(status_code=400, detail="Add at least one criterion")
         if len(model.alternatives) < 2:
             raise HTTPException(status_code=400, detail="Add at least two competency alternatives")
+        self._validate_evaluation_deadline(data.evaluation_deadline)
         model.min_competency_weight = data.min_competency_weight
         model.max_competency_rank = data.max_competency_rank
         model.evaluation_deadline = data.evaluation_deadline
@@ -540,7 +555,7 @@ class CompetencyModelService:
             .where(
                 ExpertInvite.accepted_by_user_id.is_(None),
                 func.lower(ExpertInvite.email) == normalized_email,
-                CompetencyModel.status != ModelStatus.CANCELLED,
+                CompetencyModel.status == ModelStatus.EXPERT_EVALUATION,
             )
             .order_by(ExpertInvite.created_at.desc())
         )
@@ -897,6 +912,18 @@ class CompetencyModelService:
         if model.min_competency_weight:
             return [alt for alt in sorted_alts if weights.get(alt.id, 0) >= model.min_competency_weight]
         return sorted_alts
+
+    def _validate_evaluation_deadline(self, deadline: datetime | None) -> None:
+        if deadline is None:
+            raise HTTPException(status_code=400, detail="Evaluation deadline is required")
+
+        now = datetime.now(deadline.tzinfo or timezone.utc)
+        tomorrow = (now + timedelta(days=1)).date()
+        if deadline.date() < tomorrow:
+            raise HTTPException(
+                status_code=400,
+                detail="Evaluation deadline must be tomorrow or later",
+            )
 
     def _require_status(self, model: CompetencyModel, required: ModelStatus) -> None:
         if model.status is None or model.status != required:
