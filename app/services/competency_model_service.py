@@ -1150,13 +1150,64 @@ class CompetencyModelService:
             final_weight=alternative.final_weight,
         )
 
-    def _serialize_model_expert(self, expert: ModelExpert) -> ModelExpertDetailOut:
+    async def _get_model_expert_completion_map(
+        self,
+        db: AsyncSession,
+        model_id: int,
+        expert_ids: list[int],
+    ) -> dict[int, bool]:
+        if not expert_ids:
+            return {}
+
+        criteria_total = (
+            await db.execute(select(func.count(Criterion.id)).where(Criterion.model_id == model_id))
+        ).scalar_one()
+        alternatives_per_criterion = (
+            await db.execute(select(func.count(Alternative.id)).where(Alternative.model_id == model_id))
+        ).scalar_one()
+
+        expected_alternative_total = criteria_total * alternatives_per_criterion
+        if criteria_total == 0 or expected_alternative_total == 0:
+            return {expert_id: False for expert_id in expert_ids}
+
+        criterion_counts = dict(
+            (
+                await db.execute(
+                    select(CriterionRank.expert_id, func.count(CriterionRank.criterion_id))
+                    .where(CriterionRank.expert_id.in_(expert_ids))
+                    .group_by(CriterionRank.expert_id)
+                )
+            ).all()
+        )
+        alternative_counts = dict(
+            (
+                await db.execute(
+                    select(AlternativeRank.expert_id, func.count(AlternativeRank.alternative_id))
+                    .where(AlternativeRank.expert_id.in_(expert_ids))
+                    .group_by(AlternativeRank.expert_id)
+                )
+            ).all()
+        )
+
+        return {
+            expert_id: criterion_counts.get(expert_id, 0) == criteria_total
+            and alternative_counts.get(expert_id, 0) == expected_alternative_total
+            for expert_id in expert_ids
+        }
+
+    def _serialize_model_expert(
+        self,
+        expert: ModelExpert,
+        *,
+        is_complete: bool = False,
+    ) -> ModelExpertDetailOut:
         return ModelExpertDetailOut(
             id=expert.id,
             model_id=expert.model_id,
             user_id=expert.user_id,
             rank=expert.rank,
             weight=float(expert.weight) if expert.weight is not None else None,
+            is_complete=is_complete,
             user=(
                 UserSummaryOut(
                     id=expert.user.id,
@@ -1241,6 +1292,11 @@ class CompetencyModelService:
         current_criterion_ranks: list[ExpertCriterionRankOut] | None = None,
         current_alternative_ranks: list[ExpertAlternativeRankOut] | None = None,
     ) -> ExpertCompetencyModelDetail:
+        expert_completion_map = await self._get_model_expert_completion_map(
+            db,
+            model.id,
+            [expert.id for expert in model.experts],
+        )
         invite_users = await self._get_users_by_emails(
             db,
             [invite.email for invite in model.expert_invites if invite.accepted_by_user_id is None],
@@ -1268,7 +1324,13 @@ class CompetencyModelService:
             evaluation_deadline=model.evaluation_deadline,
             status_code=model.status,
             created_at=model.created_at,
-            experts=[self._serialize_model_expert(item) for item in model.experts],
+            experts=[
+                self._serialize_model_expert(
+                    item,
+                    is_complete=expert_completion_map.get(item.id, False),
+                )
+                for item in model.experts
+            ],
             expert_invites=pending_invites,
             criteria=model.criteria,
             custom_competencies=[CustomCompetencyOut.model_validate(item) for item in model.custom_competencies],

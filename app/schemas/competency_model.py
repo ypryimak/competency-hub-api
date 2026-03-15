@@ -86,6 +86,7 @@ class ModelExpertOut(BaseModel):
     user_id: Optional[int]
     rank: int
     weight: Optional[float]
+    is_complete: bool = False
 
     model_config = {"from_attributes": True, "protected_namespaces": ()}
 

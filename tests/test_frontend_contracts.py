@@ -85,14 +85,34 @@ def test_model_expert_serializer_includes_nested_user() -> None:
         user=SimpleNamespace(id=5, name="Expert Name", email="expert@example.com"),
     )
 
-    payload = service._serialize_model_expert(expert).model_dump(mode="json")
+    payload = service._serialize_model_expert(expert, is_complete=True).model_dump(mode="json")
 
     assert payload["weight"] == 0.75
+    assert payload["is_complete"] is True
     assert payload["user"] == {
         "id": 5,
         "name": "Expert Name",
         "email": "expert@example.com",
     }
+
+
+@pytest.mark.asyncio
+async def test_model_expert_completion_map_marks_only_fully_submitted_experts() -> None:
+    service = CompetencyModelService()
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                SimpleNamespace(scalar_one=lambda: 2),
+                SimpleNamespace(scalar_one=lambda: 3),
+                SimpleNamespace(all=lambda: [(7, 2), (8, 1)]),
+                SimpleNamespace(all=lambda: [(7, 6), (8, 3)]),
+            ]
+        )
+    )
+
+    payload = await service._get_model_expert_completion_map(db, 10, [7, 8, 9])
+
+    assert payload == {7: True, 8: False, 9: False}
 
 
 def test_selection_and_candidate_serializers_include_frontend_metadata() -> None:
@@ -155,6 +175,7 @@ def test_selection_and_candidate_serializers_include_frontend_metadata() -> None
 async def test_build_model_detail_includes_current_expert_ranks() -> None:
     service = CompetencyModelService()
     service._get_users_by_emails = AsyncMock(return_value={})
+    service._get_model_expert_completion_map = AsyncMock(return_value={7: True})
     model = SimpleNamespace(
         id=10,
         user_id=2,
@@ -166,7 +187,16 @@ async def test_build_model_detail_includes_current_expert_ranks() -> None:
         evaluation_deadline=None,
         status=1,
         created_at=datetime.now(timezone.utc),
-        experts=[],
+        experts=[
+            SimpleNamespace(
+                id=7,
+                model_id=10,
+                user_id=5,
+                rank=1,
+                weight=None,
+                user=SimpleNamespace(id=5, name="Expert Name", email="expert@example.com"),
+            )
+        ],
         expert_invites=[],
         criteria=[],
         custom_competencies=[],
@@ -183,6 +213,7 @@ async def test_build_model_detail_includes_current_expert_ranks() -> None:
     dumped = payload.model_dump(mode="json")
 
     assert dumped["profession_name"] == "Data Analyst"
+    assert dumped["experts"][0]["is_complete"] is True
     assert dumped["current_criterion_ranks"] == [{"criterion_id": 5, "rank": 1}]
     assert dumped["current_alternative_ranks"] == [
         {"alternative_id": 9, "criterion_id": 5, "rank": 2}
