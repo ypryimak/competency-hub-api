@@ -57,16 +57,24 @@ def extract_candidate_tokens(text: str, lang: str = "en") -> list[str]:
         if ent.label_ in ("SKILL", "ORG", "PRODUCT", "WORK_OF_ART", "GPE"):
             tokens.add(_normalize(ent.text))
 
-    for chunk in doc.noun_chunks:
-        normalized = _normalize(chunk.text)
-        if 2 <= len(normalized) <= 60:
-            tokens.add(normalized)
+    if doc.has_annotation("DEP"):
+        for chunk in doc.noun_chunks:
+            normalized = _normalize(chunk.text)
+            if 2 <= len(normalized) <= 60:
+                tokens.add(normalized)
 
     for token in doc:
         if token.pos_ in ("NOUN", "PROPN") and not token.is_stop and len(token.text) > 2:
             tokens.add(_normalize(token.lemma_))
 
     return list(tokens)
+
+
+def _contains_alias(source_text: str, alias: str) -> bool:
+    escaped = re.escape(alias)
+    if " " in alias:
+        return re.search(rf"(?<!\w){escaped}(?!\w)", source_text) is not None
+    return re.search(rf"\b{escaped}\b", source_text) is not None
 
 
 def _normalize_competency_terms(
@@ -94,6 +102,7 @@ def _normalize_competency_terms(
 def match_competencies(
     candidate_tokens: list[str],
     competency_terms: dict[int, str | list[str] | tuple[str, ...] | set[str]],
+    source_text: str | None = None,
 ) -> tuple[list[int], list[int], list[str]]:
     """
     Match extracted tokens against known competencies.
@@ -156,6 +165,20 @@ def match_competencies(
         if not found and len(token) > 3:
             unrecognized.append(token)
 
+    normalized_source_text = _normalize(source_text or "")
+    if normalized_source_text:
+        for cid, aliases in normalized_map.items():
+            if cid in used_ids:
+                continue
+            for alias in aliases:
+                if len(alias) < 2:
+                    continue
+                if _contains_alias(normalized_source_text, alias):
+                    matched_ids.append(cid)
+                    matched_names.append(display_names.get(cid) or normalized_map[cid][0])
+                    used_ids.add(cid)
+                    break
+
     return matched_ids, matched_names, unrecognized
 
 
@@ -180,7 +203,7 @@ class DocumentProcessingService:
             (matched_ids, matched_names, unrecognized_tokens)
         """
         tokens = extract_candidate_tokens(text, lang)
-        return match_competencies(tokens, competency_map)
+        return match_competencies(tokens, competency_map, source_text=text)
 
 
 document_processing_service = DocumentProcessingService()
