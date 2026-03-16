@@ -569,6 +569,21 @@ class CompetencyModelService:
             for invite, model in result.all()
         ]
 
+    async def get_pending_invite_count_for_user(self, db: AsyncSession, user_id: int) -> int:
+        user = await self._get_user(db, user_id)
+        normalized_email = user.email.strip().lower()
+        return (
+            await db.execute(
+                select(func.count(ExpertInvite.id))
+                .join(CompetencyModel, CompetencyModel.id == ExpertInvite.model_id)
+                .where(
+                    ExpertInvite.accepted_by_user_id.is_(None),
+                    func.lower(ExpertInvite.email) == normalized_email,
+                    CompetencyModel.status == ModelStatus.EXPERT_EVALUATION,
+                )
+            )
+        ).scalar_one()
+
     async def accept_expert_invite(
         self, db: AsyncSession, token: str, user_id: int
     ) -> ModelExpert:
@@ -1370,6 +1385,38 @@ class CompetencyModelService:
             .order_by(CompetencyModel.evaluation_deadline)
         )
         return result.scalars().all()
+
+    async def get_expert_assignment_counts(self, db: AsyncSession, user_id: int) -> tuple[int, int]:
+        assignments = (
+            await db.execute(
+                select(ModelExpert.id, ModelExpert.model_id)
+                .join(CompetencyModel, CompetencyModel.id == ModelExpert.model_id)
+                .where(
+                    ModelExpert.user_id == user_id,
+                    CompetencyModel.status.in_(
+                        (ModelStatus.EXPERT_EVALUATION, ModelStatus.COMPLETED)
+                    ),
+                )
+            )
+        ).all()
+        if not assignments:
+            return 0, 0
+
+        expert_ids_by_model: dict[int, list[int]] = defaultdict(list)
+        for expert_id, model_id in assignments:
+            expert_ids_by_model[model_id].append(expert_id)
+
+        open_count = 0
+        completed_count = 0
+        for model_id, expert_ids in expert_ids_by_model.items():
+            completion_map = await self._get_model_expert_completion_map(db, model_id, expert_ids)
+            for expert_id in expert_ids:
+                if completion_map.get(expert_id, False):
+                    completed_count += 1
+                else:
+                    open_count += 1
+
+        return open_count, completed_count
 
     async def _build_model_detail(
         self,

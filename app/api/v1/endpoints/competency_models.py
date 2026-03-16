@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.models import User
+from app.schemas.common import ExpertWorkspaceSummaryOut
 from app.schemas.competency_model import (
     AlternativeCreate,
     AlternativeOut,
@@ -39,6 +40,7 @@ from app.schemas.competency_model import (
     ModelSubmitRequest,
     OPAResult,
 )
+from app.services.candidate_selection_service import candidate_selection_service
 from app.services.competency_model_service import competency_model_service
 
 router = APIRouter()
@@ -431,6 +433,45 @@ async def remove_alternative(
 ):
     await competency_model_service.remove_alternative(
         db, model_id, alternative_id, current_user.id
+    )
+
+
+@router.get(
+    "/expert/workspace-summary",
+    response_model=ExpertWorkspaceSummaryOut,
+    tags=["Expert"],
+)
+async def expert_workspace_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    model_invites = await competency_model_service.get_pending_invite_count_for_user(
+        db, current_user.id
+    )
+    selection_invites = await candidate_selection_service.get_pending_invite_count_for_user(
+        db, current_user.id
+    )
+    open_model_evaluations, completed_model_evaluations = (
+        await competency_model_service.get_expert_assignment_counts(db, current_user.id)
+    )
+    open_candidate_scorings, completed_candidate_scorings = (
+        await candidate_selection_service.get_expert_assignment_counts(db, current_user.id)
+    )
+
+    pending_invites = model_invites + selection_invites
+    completed_tasks = completed_model_evaluations + completed_candidate_scorings
+    total_notifications = (
+        pending_invites + open_model_evaluations + open_candidate_scorings
+    )
+
+    return ExpertWorkspaceSummaryOut(
+        has_workspace_access=(pending_invites + completed_tasks + open_model_evaluations + open_candidate_scorings)
+        > 0,
+        pending_invites=pending_invites,
+        open_model_evaluations=open_model_evaluations,
+        open_candidate_scorings=open_candidate_scorings,
+        completed_tasks=completed_tasks,
+        total_notifications=total_notifications,
     )
 
 

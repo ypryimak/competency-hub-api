@@ -1,3 +1,4 @@
+from collections import defaultdict
 import io
 import secrets
 from datetime import datetime, timezone
@@ -583,6 +584,40 @@ class CandidateSelectionService:
         )
         return result.scalars().all()
 
+    async def get_expert_assignment_counts(self, db: AsyncSession, user_id: int) -> tuple[int, int]:
+        assignments = (
+            await db.execute(
+                select(SelectionExpert.id, SelectionExpert.selection_id)
+                .join(Selection, Selection.id == SelectionExpert.selection_id)
+                .where(
+                    SelectionExpert.user_id == user_id,
+                    Selection.status.in_(
+                        (SelectionStatus.EXPERT_EVALUATION, SelectionStatus.COMPLETED)
+                    ),
+                )
+            )
+        ).all()
+        if not assignments:
+            return 0, 0
+
+        expert_ids_by_selection: dict[int, list[int]] = defaultdict(list)
+        for expert_id, selection_id in assignments:
+            expert_ids_by_selection[selection_id].append(expert_id)
+
+        open_count = 0
+        completed_count = 0
+        for selection_id, expert_ids in expert_ids_by_selection.items():
+            completion_map = await self._get_selection_expert_completion_map(
+                db, selection_id, expert_ids
+            )
+            for expert_id in expert_ids:
+                if completion_map.get(expert_id, False):
+                    completed_count += 1
+                else:
+                    open_count += 1
+
+        return open_count, completed_count
+
     async def list_pending_invites_for_user(
         self, db: AsyncSession, user_id: int
     ) -> list[SelectionExpertInviteOut]:
@@ -603,6 +638,21 @@ class CandidateSelectionService:
             self._serialize_expert_invite(invite, status="invited", matched_user=user)
             for invite in invites
         ]
+
+    async def get_pending_invite_count_for_user(self, db: AsyncSession, user_id: int) -> int:
+        user = await self._get_user(db, user_id)
+        normalized_email = user.email.strip().lower()
+        return (
+            await db.execute(
+                select(func.count(SelectionExpertInvite.id))
+                .join(Selection, Selection.id == SelectionExpertInvite.selection_id)
+                .where(
+                    SelectionExpertInvite.accepted_by_user_id.is_(None),
+                    func.lower(SelectionExpertInvite.email) == normalized_email,
+                    Selection.status == SelectionStatus.EXPERT_EVALUATION,
+                )
+            )
+        ).scalar_one()
 
     async def accept_expert_invite(
         self, db: AsyncSession, token: str, user_id: int

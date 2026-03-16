@@ -116,6 +116,29 @@ async def test_model_expert_completion_map_marks_only_fully_submitted_experts() 
     assert payload == {7: True, 8: False, 9: False}
 
 
+@pytest.mark.asyncio
+async def test_model_assignment_counts_split_open_and_completed_tasks() -> None:
+    service = CompetencyModelService()
+    service._get_model_expert_completion_map = AsyncMock(
+        side_effect=[{11: True}, {12: False}]
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                all=lambda: [
+                    (11, 101),
+                    (12, 102),
+                ]
+            )
+        )
+    )
+
+    open_count, completed_count = await service.get_expert_assignment_counts(db, 5)
+
+    assert open_count == 1
+    assert completed_count == 1
+
+
 def test_run_opa_normalizes_all_weight_groups_to_one() -> None:
     result = run_opa(
         experts=[ExpertInput(id=1, rank=1), ExpertInput(id=2, rank=2)],
@@ -231,6 +254,29 @@ async def test_selection_and_candidate_serializers_include_frontend_metadata() -
     assert selection_payload["status_code"] == 1
     assert selection_payload["status"] == "draft"
     assert selection_payload["experts"][0]["user"]["email"] == "selection-expert@example.com"
+
+
+@pytest.mark.asyncio
+async def test_selection_assignment_counts_split_open_and_completed_tasks() -> None:
+    service = CandidateSelectionService()
+    service._get_selection_expert_completion_map = AsyncMock(
+        side_effect=[{21: False}, {22: True}]
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                all=lambda: [
+                    (21, 301),
+                    (22, 302),
+                ]
+            )
+        )
+    )
+
+    open_count, completed_count = await service.get_expert_assignment_counts(db, 8)
+
+    assert open_count == 1
+    assert completed_count == 1
 
 
 @pytest.mark.asyncio
