@@ -151,6 +151,27 @@ def test_final_weight_normalizer_returns_sum_one() -> None:
     assert sum(payload.values()) == pytest.approx(1.0, abs=1e-6)
 
 
+def test_filter_alternatives_uses_and_when_both_filters_are_set() -> None:
+    service = CompetencyModelService()
+    model = SimpleNamespace(max_competency_rank=3, min_competency_weight=0.5)
+    alternatives = [
+        SimpleNamespace(id=1),
+        SimpleNamespace(id=2),
+        SimpleNamespace(id=3),
+        SimpleNamespace(id=4),
+    ]
+    weights = {
+        1: 0.9,
+        2: 0.8,
+        3: 0.6,
+        4: 0.4,
+    }
+
+    filtered = service._filter_alternatives(model, alternatives, weights)
+
+    assert [alt.id for alt in filtered] == [1, 2, 3]
+
+
 @pytest.mark.asyncio
 async def test_selection_and_candidate_serializers_include_frontend_metadata() -> None:
     service = CandidateSelectionService()

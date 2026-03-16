@@ -935,11 +935,19 @@ class CompetencyModelService:
         weights: dict[int, float],
     ) -> list[Alternative]:
         sorted_alts = sorted(alternatives, key=lambda alt: weights.get(alt.id, 0), reverse=True)
-        if model.max_competency_rank:
-            return sorted_alts[: model.max_competency_rank]
-        if model.min_competency_weight:
-            return [alt for alt in sorted_alts if weights.get(alt.id, 0) >= model.min_competency_weight]
-        return sorted_alts
+        filtered: list[Alternative] = []
+
+        for index, alt in enumerate(sorted_alts, start=1):
+            if model.max_competency_rank is not None and index > model.max_competency_rank:
+                continue
+            if (
+                model.min_competency_weight is not None
+                and weights.get(alt.id, 0) < model.min_competency_weight
+            ):
+                continue
+            filtered.append(alt)
+
+        return filtered
 
     def _validate_evaluation_deadline(self, deadline: datetime | None) -> None:
         if deadline is None:
