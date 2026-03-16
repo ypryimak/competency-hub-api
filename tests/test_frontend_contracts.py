@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.core.enums import ModelStatus
+from app.core.enums import ModelStatus, SelectionStatus
 from app.schemas.activity import ActivityLogOut
 from app.schemas.auth import UserOut, UserRegister
 from app.schemas.candidate_selection import CandidateOut, ExpertCandidateScoreOut, SelectionOut
@@ -24,6 +24,7 @@ from app.services.candidate_selection_service import CandidateSelectionService
 from app.services.competency_model_service import CompetencyModelService
 from app.services.email_service import email_service
 from app.services.activity_service import activity_service
+from app.services.opa_service import AlternativeInput, CriterionInput, ExpertInput, run_opa
 
 
 def test_user_out_exposes_role_code_and_string_role() -> None:
@@ -115,8 +116,46 @@ async def test_model_expert_completion_map_marks_only_fully_submitted_experts() 
     assert payload == {7: True, 8: False, 9: False}
 
 
-def test_selection_and_candidate_serializers_include_frontend_metadata() -> None:
+def test_run_opa_normalizes_all_weight_groups_to_one() -> None:
+    result = run_opa(
+        experts=[ExpertInput(id=1, rank=1), ExpertInput(id=2, rank=2)],
+        criteria=[
+            CriterionInput(id=11, expert_id=1, rank=1),
+            CriterionInput(id=12, expert_id=1, rank=2),
+            CriterionInput(id=11, expert_id=2, rank=1),
+            CriterionInput(id=12, expert_id=2, rank=2),
+        ],
+        alternatives=[
+            AlternativeInput(id=21, expert_id=1, criterion_id=11, rank=1),
+            AlternativeInput(id=22, expert_id=1, criterion_id=11, rank=2),
+            AlternativeInput(id=21, expert_id=1, criterion_id=12, rank=1),
+            AlternativeInput(id=22, expert_id=1, criterion_id=12, rank=2),
+            AlternativeInput(id=21, expert_id=2, criterion_id=11, rank=1),
+            AlternativeInput(id=22, expert_id=2, criterion_id=11, rank=2),
+            AlternativeInput(id=21, expert_id=2, criterion_id=12, rank=1),
+            AlternativeInput(id=22, expert_id=2, criterion_id=12, rank=2),
+        ],
+    )
+
+    assert result.solved is True
+    assert sum(result.expert_weights.values()) == pytest.approx(1.0, abs=1e-6)
+    assert sum(result.criterion_weights.values()) == pytest.approx(1.0, abs=1e-6)
+    assert sum(result.alternative_weights.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_final_weight_normalizer_returns_sum_one() -> None:
+    service = CompetencyModelService()
+
+    payload = service._normalize_weights_for_sum_one({1: 0.3333333, 2: 0.3333333, 3: 0.3333334})
+
+    assert sum(payload.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_selection_and_candidate_serializers_include_frontend_metadata() -> None:
     service = CandidateSelectionService()
+    service._get_selection_expert_completion_map = AsyncMock(return_value={31: True})
+    service._get_users_by_emails = AsyncMock(return_value={})
     candidate = SimpleNamespace(
         id=21,
         user_id=2,
@@ -162,7 +201,9 @@ def test_selection_and_candidate_serializers_include_frontend_metadata() -> None
     )
 
     candidate_payload = service._serialize_candidate_summary(candidate, 3).model_dump(mode="json")
-    selection_payload = service._serialize_selection_detail(selection).model_dump(mode="json")
+    selection_payload = (
+        await service._serialize_selection_detail(SimpleNamespace(), selection)
+    ).model_dump(mode="json")
 
     assert candidate_payload["cv_parse_status"] == "parsed"
     assert candidate_payload["matched_competency_count"] == 3
@@ -220,8 +261,11 @@ async def test_build_model_detail_includes_current_expert_ranks() -> None:
     ]
 
 
-def test_selection_serializer_includes_current_scores() -> None:
+@pytest.mark.asyncio
+async def test_selection_serializer_includes_current_scores() -> None:
     service = CandidateSelectionService()
+    service._get_selection_expert_completion_map = AsyncMock(return_value={})
+    service._get_users_by_emails = AsyncMock(return_value={})
     selection = SimpleNamespace(
         id=9,
         user_id=2,
@@ -235,14 +279,180 @@ def test_selection_serializer_includes_current_scores() -> None:
         expert_invites=[],
     )
 
-    payload = service._serialize_selection_detail(
-        selection,
-        current_scores=[ExpertCandidateScoreOut(candidate_id=21, selection_criterion_id=8, score=4)],
+    payload = (
+        await service._serialize_selection_detail(
+            SimpleNamespace(),
+            selection,
+            current_scores=[ExpertCandidateScoreOut(candidate_id=21, selection_criterion_id=8, score=4)],
+        )
     ).model_dump(mode="json")
 
     assert payload["current_scores"] == [
         {"candidate_id": 21, "selection_criterion_id": 8, "score": 4}
     ]
+
+
+@pytest.mark.asyncio
+async def test_selection_detail_serialization_marks_completed_experts_and_pending_invites() -> None:
+    service = CandidateSelectionService()
+    service._get_selection_expert_completion_map = AsyncMock(return_value={31: True, 32: False})
+    service._get_users_by_emails = AsyncMock(
+        return_value={
+            "invite@example.com": SimpleNamespace(
+                id=17,
+                name="Invited Expert",
+                email="invite@example.com",
+            )
+        }
+    )
+    selection = SimpleNamespace(
+        id=15,
+        user_id=3,
+        model_id=21,
+        evaluation_deadline=None,
+        status=1,
+        created_at=datetime.now(timezone.utc),
+        candidates=[],
+        experts=[
+            SimpleNamespace(
+                id=31,
+                selection_id=15,
+                user_id=8,
+                weight=Decimal("0.70"),
+                user=SimpleNamespace(id=8, name="Completed Expert", email="done@example.com"),
+            ),
+            SimpleNamespace(
+                id=32,
+                selection_id=15,
+                user_id=9,
+                weight=None,
+                user=SimpleNamespace(id=9, name="Accepted Expert", email="open@example.com"),
+            ),
+        ],
+        criteria=[],
+        expert_invites=[
+            SimpleNamespace(
+                id=41,
+                selection_id=15,
+                email="invite@example.com",
+                weight=Decimal("0.30"),
+                token="pending-token",
+                accepted_by_user_id=None,
+                created_at=datetime.now(timezone.utc),
+            ),
+            SimpleNamespace(
+                id=42,
+                selection_id=15,
+                email="accepted@example.com",
+                weight=None,
+                token="accepted-token",
+                accepted_by_user_id=99,
+                created_at=datetime.now(timezone.utc),
+            ),
+        ],
+    )
+
+    payload = (
+        await service._serialize_selection_detail(SimpleNamespace(), selection)
+    ).model_dump(mode="json")
+
+    assert payload["experts"][0]["is_complete"] is True
+    assert payload["experts"][1]["is_complete"] is False
+    assert payload["expert_invites"] == [
+        {
+            "id": 41,
+            "selection_id": 15,
+            "email": "invite@example.com",
+            "weight": 0.3,
+            "token": "pending-token",
+            "accepted_by_user_id": None,
+            "created_at": payload["expert_invites"][0]["created_at"],
+            "status": "added",
+            "user": {
+                "id": 17,
+                "name": "Invited Expert",
+                "email": "invite@example.com",
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_selection_expert_invite_returns_added_status_and_matched_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CandidateSelectionService()
+    selection = SimpleNamespace(
+        id=12,
+        status=SelectionStatus.DRAFT,
+    )
+    captured_invites: list[object] = []
+
+    async def refresh(invite: object) -> None:
+        invite.id = 52
+        invite.created_at = datetime.now(timezone.utc)
+
+    db = SimpleNamespace(
+        add=captured_invites.append,
+        flush=AsyncMock(),
+        refresh=AsyncMock(side_effect=refresh),
+    )
+    service._get_selection_orm = AsyncMock(return_value=selection)
+    service._ensure_invite_email_missing = AsyncMock()
+    service._ensure_email_not_already_expert = AsyncMock()
+    service._get_users_by_emails = AsyncMock(
+        return_value={
+            "expert@example.com": SimpleNamespace(
+                id=9,
+                name="Existing Expert",
+                email="expert@example.com",
+            )
+        }
+    )
+    send_invite = AsyncMock()
+    monkeypatch.setattr(email_service, "send_selection_invite", send_invite)
+
+    payload = await service.create_expert_invite(
+        db,
+        12,
+        3,
+        SimpleNamespace(email="Expert@example.com", weight=0.4),
+    )
+
+    assert captured_invites
+    assert payload.status == "added"
+    assert payload.email == "expert@example.com"
+    assert payload.user is not None
+    assert payload.user.name == "Existing Expert"
+    send_invite.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_selection_sends_pending_selection_invites(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CandidateSelectionService()
+    pending_invite = SimpleNamespace(id=51, accepted_by_user_id=None)
+    selection = SimpleNamespace(
+        id=11,
+        user_id=7,
+        status=SelectionStatus.DRAFT,
+        experts=[],
+        expert_invites=[pending_invite],
+        candidates=[SimpleNamespace(candidate_id=1)],
+    )
+    db = SimpleNamespace(flush=AsyncMock(), refresh=AsyncMock())
+    service._get_selection_orm = AsyncMock(return_value=selection)
+    log_activity = AsyncMock()
+    send_invite = AsyncMock()
+    monkeypatch.setattr(activity_service, "log", log_activity)
+    monkeypatch.setattr(email_service, "send_selection_invite", send_invite)
+
+    await service.submit_selection(db, 11, 7)
+
+    assert selection.status == SelectionStatus.EXPERT_EVALUATION
+    send_invite.assert_awaited_once_with(db, 51)
+    log_activity.assert_awaited_once()
 
 
 def test_user_out_exposes_position_and_company() -> None:

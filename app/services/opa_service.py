@@ -56,6 +56,23 @@ class OPAOutput:
     message: str
 
 
+def _normalize_weights(weights: dict[int, float], precision: int = 6) -> dict[int, float]:
+    if not weights:
+        return {}
+
+    total = sum(weights.values())
+    if total <= 0:
+        return {key: 0.0 for key in weights}
+
+    normalized = {key: value / total for key, value in weights.items()}
+    rounded = {key: round(value, precision) for key, value in normalized.items()}
+    correction = round(1 - sum(rounded.values()), precision)
+    if correction != 0:
+        anchor_key = max(normalized, key=normalized.get)
+        rounded[anchor_key] = round(rounded[anchor_key] + correction, precision)
+    return rounded
+
+
 def run_opa(
     experts: list[ExpertInput],
     criteria: list[CriterionInput],
@@ -121,7 +138,8 @@ def run_opa(
                     next_alt = alts_sorted[idx + 1]
                     next_key = (e.id, c.id, next_alt.id)
                     if next_key in w:
-                        prob += z <= r_i * r_j * (w[key] - w[next_key])
+                        r_k = alt.rank
+                        prob += z <= r_i * r_j * r_k * (w[key] - w[next_key])
                 else:
                     r_m = alt.rank
                     prob += z <= r_i * r_j * r_m * w[key]
@@ -149,13 +167,9 @@ def run_opa(
         criterion_weights[cid] = round(criterion_weights.get(cid, 0.0) + val, 6)
         expert_weights[eid] = round(expert_weights.get(eid, 0.0) + val, 6)
 
-    # Divide by the number of alternatives so criterion weights reflect
-    # criterion importance rather than criterion*alternative aggregation.
-    n_alts = len(alt_ids) if alt_ids else 1
-    criterion_weights = {
-        cid: round(weight / n_alts, 6)
-        for cid, weight in criterion_weights.items()
-    }
+    expert_weights = _normalize_weights(expert_weights)
+    criterion_weights = _normalize_weights(criterion_weights)
+    alternative_weights = _normalize_weights(alternative_weights)
 
     return OPAOutput(
         expert_weights=expert_weights,

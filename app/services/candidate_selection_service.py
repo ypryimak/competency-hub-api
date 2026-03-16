@@ -71,7 +71,7 @@ class CandidateSelectionService:
 
     async def get_selection(self, db: AsyncSession, selection_id: int, user_id: int) -> SelectionDetail:
         selection = await self._get_selection_orm(db, selection_id, user_id)
-        return self._serialize_selection_detail(selection)
+        return await self._serialize_selection_detail(db, selection)
 
     async def get_selection_as_expert(
         self, db: AsyncSession, selection_id: int, user_id: int
@@ -85,7 +85,8 @@ class CandidateSelectionService:
                 .order_by(CandidateScore.candidate_id, CandidateScore.selection_criterion_id)
             )
         ).scalars().all()
-        return self._serialize_selection_detail(
+        return await self._serialize_selection_detail(
+            db,
             selection,
             current_scores=[
                 ExpertCandidateScoreOut(
@@ -388,14 +389,23 @@ class CandidateSelectionService:
 
     async def list_expert_invites(
         self, db: AsyncSession, selection_id: int, user_id: int
-    ) -> list[SelectionExpertInvite]:
-        await self._get_selection_orm(db, selection_id, user_id)
+    ) -> list[SelectionExpertInviteOut]:
+        selection = await self._get_selection_orm(db, selection_id, user_id)
         result = await db.execute(
             select(SelectionExpertInvite)
             .where(SelectionExpertInvite.selection_id == selection_id)
             .order_by(SelectionExpertInvite.created_at, SelectionExpertInvite.id)
         )
-        return result.scalars().all()
+        invites = [invite for invite in result.scalars().all() if invite.accepted_by_user_id is None]
+        matched_users = await self._get_users_by_emails(db, [invite.email for invite in invites])
+        return [
+            self._serialize_expert_invite(
+                invite,
+                status="added" if selection.status == SelectionStatus.DRAFT else "invited",
+                matched_user=matched_users.get(invite.email.strip().lower()),
+            )
+            for invite in invites
+        ]
 
     async def create_expert_invite(
         self,
@@ -403,7 +413,7 @@ class CandidateSelectionService:
         selection_id: int,
         user_id: int,
         data: SelectionExpertInviteCreate,
-    ) -> SelectionExpertInvite:
+    ) -> SelectionExpertInviteOut:
         selection = await self._get_selection_orm(db, selection_id, user_id)
         self._require_status(selection, SelectionStatus.DRAFT)
         normalized_email = data.email.strip().lower()
@@ -418,8 +428,8 @@ class CandidateSelectionService:
         db.add(invite)
         await db.flush()
         await db.refresh(invite)
-        await email_service.send_selection_invite(db, invite.id)
-        return invite
+        matched_user = (await self._get_users_by_emails(db, [normalized_email])).get(normalized_email)
+        return self._serialize_expert_invite(invite, status="added", matched_user=matched_user)
 
     async def update_expert_invite(
         self,
@@ -428,7 +438,7 @@ class CandidateSelectionService:
         invite_id: int,
         user_id: int,
         data: SelectionExpertInviteUpdate,
-    ) -> SelectionExpertInvite:
+    ) -> SelectionExpertInviteOut:
         selection = await self._get_selection_orm(db, selection_id, user_id)
         self._require_status(selection, SelectionStatus.DRAFT)
         invite = await self._get_expert_invite(db, invite_id, selection_id)
@@ -449,7 +459,8 @@ class CandidateSelectionService:
             invite.weight = data.weight
         await db.flush()
         await db.refresh(invite)
-        return invite
+        matched_user = (await self._get_users_by_emails(db, [invite.email])).get(invite.email.strip().lower())
+        return self._serialize_expert_invite(invite, status="added", matched_user=matched_user)
 
     async def delete_expert_invite(
         self, db: AsyncSession, selection_id: int, invite_id: int, user_id: int
@@ -469,6 +480,8 @@ class CandidateSelectionService:
             raise HTTPException(status_code=400, detail="Add at least one expert or invite")
         selection.status = SelectionStatus.EXPERT_EVALUATION
         await db.flush()
+        for invite in pending_invites:
+            await email_service.send_selection_invite(db, invite.id)
         await activity_service.log(db, selection.user_id, "selection", selection.id, "status_change", "draft", "expert_evaluation")
         await db.refresh(selection)
         return selection
@@ -581,11 +594,15 @@ class CandidateSelectionService:
             .where(
                 SelectionExpertInvite.accepted_by_user_id.is_(None),
                 func.lower(SelectionExpertInvite.email) == normalized_email,
-                Selection.status != SelectionStatus.CANCELLED,
+                Selection.status == SelectionStatus.EXPERT_EVALUATION,
             )
             .order_by(SelectionExpertInvite.created_at.desc())
         )
-        return [self._serialize_expert_invite(invite) for invite in result.scalars().all()]
+        invites = result.scalars().all()
+        return [
+            self._serialize_expert_invite(invite, status="invited", matched_user=user)
+            for invite in invites
+        ]
 
     async def accept_expert_invite(
         self, db: AsyncSession, token: str, user_id: int
@@ -985,11 +1002,58 @@ class CandidateSelectionService:
         if result.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="Pending invite for this email already exists")
 
-    def _serialize_selection_detail(
+    async def _get_selection_expert_completion_map(
         self,
+        db: AsyncSession,
+        selection_id: int,
+        expert_ids: list[int],
+    ) -> dict[int, bool]:
+        if not expert_ids:
+            return {}
+
+        candidate_ids = await self._get_selection_candidate_ids(db, selection_id)
+        criterion_ids = await self._get_selection_criterion_ids(db, selection_id)
+        expected_total = len(candidate_ids) * len(criterion_ids)
+        if expected_total == 0:
+            return {expert_id: False for expert_id in expert_ids}
+
+        score_counts = dict(
+            (
+                await db.execute(
+                    select(CandidateScore.expert_id, func.count(CandidateScore.candidate_id))
+                    .where(CandidateScore.expert_id.in_(expert_ids))
+                    .group_by(CandidateScore.expert_id)
+                )
+            ).all()
+        )
+        return {
+            expert_id: score_counts.get(expert_id, 0) == expected_total
+            for expert_id in expert_ids
+        }
+
+    async def _get_users_by_emails(self, db: AsyncSession, emails: list[str]) -> dict[str, User]:
+        normalized_emails = sorted({email.strip().lower() for email in emails if email})
+        if not normalized_emails:
+            return {}
+
+        rows = (
+            await db.execute(select(User).where(func.lower(User.email).in_(normalized_emails)))
+        ).scalars().all()
+        return {user.email.strip().lower(): user for user in rows}
+
+    async def _serialize_selection_detail(
+        self,
+        db: AsyncSession,
         selection: Selection,
         current_scores: list[ExpertCandidateScoreOut] | None = None,
     ) -> ExpertSelectionDetail:
+        expert_completion_map = await self._get_selection_expert_completion_map(
+            db,
+            selection.id,
+            [expert.id for expert in selection.experts],
+        )
+        pending_invites = [invite for invite in selection.expert_invites if invite.accepted_by_user_id is None]
+        matched_users = await self._get_users_by_emails(db, [invite.email for invite in pending_invites])
         return ExpertSelectionDetail(
             id=selection.id,
             user_id=selection.user_id,
@@ -1008,9 +1072,22 @@ class CandidateSelectionService:
                 )
                 for item in selection.candidates
             ],
-            experts=[self._serialize_selection_expert(item) for item in selection.experts],
+            experts=[
+                self._serialize_selection_expert(
+                    item,
+                    is_complete=expert_completion_map.get(item.id, False),
+                )
+                for item in selection.experts
+            ],
             criteria=[SelectionCriterionOut.model_validate(item) for item in selection.criteria],
-            expert_invites=[self._serialize_expert_invite(item) for item in selection.expert_invites],
+            expert_invites=[
+                self._serialize_expert_invite(
+                    item,
+                    status="added" if selection.status == SelectionStatus.DRAFT else "invited",
+                    matched_user=matched_users.get(item.email.strip().lower()),
+                )
+                for item in pending_invites
+            ],
             current_scores=current_scores or [],
         )
 
@@ -1059,12 +1136,18 @@ class CandidateSelectionService:
             created_at=candidate.created_at,
         )
     
-    def _serialize_selection_expert(self, expert: SelectionExpert) -> SelectionExpertDetailOut:
+    def _serialize_selection_expert(
+        self,
+        expert: SelectionExpert,
+        *,
+        is_complete: bool = False,
+    ) -> SelectionExpertDetailOut:
         return SelectionExpertDetailOut(
             id=expert.id,
             selection_id=expert.selection_id,
             user_id=expert.user_id,
             weight=float(expert.weight) if expert.weight is not None else None,
+            is_complete=is_complete,
             user=(
                 UserSummaryOut(
                     id=expert.user.id,
@@ -1076,7 +1159,13 @@ class CandidateSelectionService:
             ),
         )
 
-    def _serialize_expert_invite(self, invite: SelectionExpertInvite) -> SelectionExpertInviteOut:
+    def _serialize_expert_invite(
+        self,
+        invite: SelectionExpertInvite,
+        *,
+        status: str,
+        matched_user: User | None,
+    ) -> SelectionExpertInviteOut:
         return SelectionExpertInviteOut(
             id=invite.id,
             selection_id=invite.selection_id,
@@ -1085,6 +1174,16 @@ class CandidateSelectionService:
             token=invite.token,
             accepted_by_user_id=invite.accepted_by_user_id,
             created_at=invite.created_at,
+            status=status,
+            user=(
+                UserSummaryOut(
+                    id=matched_user.id,
+                    name=matched_user.name,
+                    email=matched_user.email,
+                )
+                if matched_user is not None
+                else None
+            ),
         )
 
     def _resolve_selection_criterion_name(self, alternative: Alternative) -> str:

@@ -719,10 +719,11 @@ class CompetencyModelService:
         db: AsyncSession,
         model: CompetencyModel,
     ) -> OPAResult:
-        if model.status != ModelStatus.EXPERT_EVALUATION:
-            raise HTTPException(status_code=400, detail="OPA can only run in expert evaluation status")
+        if model.status not in (ModelStatus.EXPERT_EVALUATION, ModelStatus.COMPLETED):
+            raise HTTPException(status_code=400, detail="OPA can only run in expert evaluation or completed status")
 
         model_id = model.id
+        was_completed = model.status == ModelStatus.COMPLETED
         experts = (
             await db.execute(select(ModelExpert).where(ModelExpert.model_id == model_id))
         ).scalars().all()
@@ -792,15 +793,23 @@ class CompetencyModelService:
 
         filtered = self._filter_alternatives(model, alternatives, opa_result.alternative_weights)
         total_weight = sum(opa_result.alternative_weights.get(alt.id, 0) for alt in filtered)
+        normalized_filtered_weights = (
+            self._normalize_weights_for_sum_one(
+                {alt.id: opa_result.alternative_weights.get(alt.id, 0) for alt in filtered}
+            )
+            if filtered
+            else {}
+        )
         for alt in alternatives:
             if alt in filtered and total_weight > 0:
-                alt.final_weight = round(opa_result.alternative_weights.get(alt.id, 0) / total_weight, 6)
+                alt.final_weight = normalized_filtered_weights.get(alt.id)
             else:
                 alt.final_weight = None
 
         model.status = ModelStatus.COMPLETED
         await db.flush()
-        await activity_service.log(db, model.user_id, "model", model.id, "status_change", "expert_evaluation", "completed")
+        if not was_completed:
+            await activity_service.log(db, model.user_id, "model", model.id, "status_change", "expert_evaluation", "completed")
 
         return OPAResult(
             expert_weights=opa_result.expert_weights,
@@ -809,6 +818,26 @@ class CompetencyModelService:
             filtered_alternatives=[self._serialize_alternative(alt) for alt in filtered],
             status="success",
         )
+
+    def _normalize_weights_for_sum_one(
+        self,
+        weights: dict[int, float],
+        precision: int = 6,
+    ) -> dict[int, float]:
+        if not weights:
+            return {}
+
+        total = sum(weights.values())
+        if total <= 0:
+            return {key: 0.0 for key in weights}
+
+        normalized = {key: value / total for key, value in weights.items()}
+        rounded = {key: round(value, precision) for key, value in normalized.items()}
+        correction = round(1 - sum(rounded.values()), precision)
+        if correction != 0:
+            anchor_key = max(normalized, key=normalized.get)
+            rounded[anchor_key] = round(rounded[anchor_key] + correction, precision)
+        return rounded
 
     async def get_recommendations(
         self, db: AsyncSession, model_id: int, user_id: int

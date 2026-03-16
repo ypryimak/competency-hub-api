@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, Field, computed_field
 
@@ -118,6 +118,7 @@ class SelectionExpertOut(BaseModel):
     selection_id: int
     user_id: Optional[int]
     weight: Optional[float]
+    is_complete: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -144,6 +145,8 @@ class SelectionExpertInviteOut(BaseModel):
     token: str
     accepted_by_user_id: Optional[int] = None
     created_at: datetime
+    status: Literal["added", "invited"]
+    user: Optional[UserSummaryOut] = None
 
     model_config = {"from_attributes": True, "protected_namespaces": ()}
 
