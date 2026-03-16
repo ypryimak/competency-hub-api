@@ -158,6 +158,9 @@ class AlternativeOut(BaseModel):
     competency_id: Optional[int]
     custom_competency_id: Optional[int] = None
     competency_name: Optional[str] = None
+    competency_type: Optional[str] = None
+    description: Optional[str] = None
+    link_types: list[str] = []
     source_type: str
     weight: Optional[float]
     final_weight: Optional[float]

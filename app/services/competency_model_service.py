@@ -67,6 +67,14 @@ LINK_TYPE_SCORES = {
     "job_derived": 0.0,
 }
 
+LINK_TYPE_ORDER = {
+    "esco_essential": 0,
+    "esco_optional": 1,
+    "job_derived": 2,
+    "manual": 3,
+    "custom": 4,
+}
+
 
 class CompetencyModelService:
     async def list_models(self, db: AsyncSession, user_id: int) -> Sequence[CompetencyModel]:
@@ -1156,7 +1164,12 @@ class CompetencyModelService:
             db.add(Alternative(model_id=model.id, competency_id=row.competency_id))
         await db.flush()
 
-    def _serialize_alternative(self, alternative: Alternative) -> AlternativeOut:
+    def _serialize_alternative(
+        self,
+        alternative: Alternative,
+        *,
+        link_types: list[str] | None = None,
+    ) -> AlternativeOut:
         if alternative.custom_competency is not None:
             return AlternativeOut(
                 id=alternative.id,
@@ -1164,6 +1177,9 @@ class CompetencyModelService:
                 competency_id=None,
                 custom_competency_id=alternative.custom_competency_id,
                 competency_name=alternative.custom_competency.name,
+                competency_type="custom",
+                description=alternative.custom_competency.description,
+                link_types=["manual"],
                 source_type="custom",
                 weight=alternative.weight,
                 final_weight=alternative.final_weight,
@@ -1174,10 +1190,43 @@ class CompetencyModelService:
             competency_id=alternative.competency_id,
             custom_competency_id=None,
             competency_name=alternative.competency.name if alternative.competency else None,
+            competency_type=alternative.competency.competency_type if alternative.competency else None,
+            description=alternative.competency.description if alternative.competency else None,
+            link_types=link_types or ["manual"],
             source_type="system",
             weight=alternative.weight,
             final_weight=alternative.final_weight,
         )
+
+    async def _get_profession_link_types(
+        self,
+        db: AsyncSession,
+        profession_id: int | None,
+        competency_ids: list[int],
+    ) -> dict[int, list[str]]:
+        if profession_id is None or not competency_ids:
+            return {}
+
+        rows = (
+            await db.execute(
+                select(ProfessionCompetency.competency_id, ProfessionCompetency.link_type).where(
+                    ProfessionCompetency.profession_id == profession_id,
+                    ProfessionCompetency.competency_id.in_(competency_ids),
+                )
+            )
+        ).all()
+
+        grouped: dict[int, set[str]] = defaultdict(set)
+        for competency_id, link_type in rows:
+            grouped[competency_id].add(link_type)
+
+        return {
+            competency_id: sorted(
+                link_types,
+                key=lambda item: (LINK_TYPE_ORDER.get(item, 99), item),
+            )
+            for competency_id, link_types in grouped.items()
+        }
 
     async def _get_model_expert_completion_map(
         self,
@@ -1330,6 +1379,15 @@ class CompetencyModelService:
             db,
             [invite.email for invite in model.expert_invites if invite.accepted_by_user_id is None],
         )
+        alternative_link_types = await self._get_profession_link_types(
+            db,
+            model.profession_id,
+            [
+                alternative.competency_id
+                for alternative in model.alternatives
+                if alternative.competency_id is not None
+            ],
+        )
         pending_invites = [
             self._serialize_expert_invite(
                 invite,
@@ -1363,7 +1421,15 @@ class CompetencyModelService:
             expert_invites=pending_invites,
             criteria=model.criteria,
             custom_competencies=[CustomCompetencyOut.model_validate(item) for item in model.custom_competencies],
-            alternatives=[self._serialize_alternative(alt) for alt in model.alternatives],
+            alternatives=[
+                self._serialize_alternative(
+                    alt,
+                    link_types=alternative_link_types.get(alt.competency_id, ["manual"])
+                    if alt.competency_id is not None
+                    else None,
+                )
+                for alt in model.alternatives
+            ],
             current_criterion_ranks=current_criterion_ranks or [],
             current_alternative_ranks=current_alternative_ranks or [],
         )

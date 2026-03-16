@@ -262,6 +262,71 @@ async def test_build_model_detail_includes_current_expert_ranks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_model_detail_includes_alternative_metadata_and_link_types() -> None:
+    service = CompetencyModelService()
+    service._get_users_by_emails = AsyncMock(return_value={})
+    service._get_model_expert_completion_map = AsyncMock(return_value={})
+    service._get_profession_link_types = AsyncMock(return_value={15: ["esco_essential", "job_derived"]})
+    model = SimpleNamespace(
+        id=10,
+        user_id=2,
+        name="Model",
+        profession_id=4,
+        profession=SimpleNamespace(name="Data Analyst"),
+        min_competency_weight=None,
+        max_competency_rank=None,
+        evaluation_deadline=None,
+        status=1,
+        created_at=datetime.now(timezone.utc),
+        experts=[],
+        expert_invites=[],
+        criteria=[],
+        custom_competencies=[],
+        alternatives=[
+            SimpleNamespace(
+                id=7,
+                model_id=10,
+                competency_id=15,
+                custom_competency_id=None,
+                competency=SimpleNamespace(
+                    name="Data analysis",
+                    competency_type="skill",
+                    description="Analyze complex data sets.",
+                ),
+                custom_competency=None,
+                source_type="system",
+                weight=None,
+                final_weight=None,
+            ),
+            SimpleNamespace(
+                id=8,
+                model_id=10,
+                competency_id=None,
+                custom_competency_id=3,
+                competency=None,
+                custom_competency=SimpleNamespace(
+                    name="Stakeholder empathy",
+                    description="Custom competency description.",
+                ),
+                source_type="custom",
+                weight=None,
+                final_weight=None,
+            ),
+        ],
+    )
+
+    dumped = (
+        await service._build_model_detail(SimpleNamespace(), model)
+    ).model_dump(mode="json")
+
+    assert dumped["alternatives"][0]["competency_type"] == "skill"
+    assert dumped["alternatives"][0]["description"] == "Analyze complex data sets."
+    assert dumped["alternatives"][0]["link_types"] == ["esco_essential", "job_derived"]
+    assert dumped["alternatives"][1]["competency_type"] == "custom"
+    assert dumped["alternatives"][1]["link_types"] == ["manual"]
+
+
+@pytest.mark.asyncio
 async def test_selection_serializer_includes_current_scores() -> None:
     service = CandidateSelectionService()
     service._get_selection_expert_completion_map = AsyncMock(return_value={})
