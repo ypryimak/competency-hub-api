@@ -220,11 +220,13 @@ class CompetencyModelService:
         )
         invites = [invite for invite in result.scalars().all() if invite.accepted_by_user_id is None]
         matched_users = await self._get_users_by_emails(db, [invite.email for invite in invites])
+        profession = getattr(model, "profession", None)
         return [
             self._serialize_expert_invite(
                 invite,
                 model_name=model.name,
                 profession_id=model.profession_id,
+                profession_name=profession.name if profession else None,
                 status="added" if model.status == ModelStatus.DRAFT else "invited",
                 matched_user=matched_users.get(invite.email.strip().lower()),
             )
@@ -250,10 +252,12 @@ class CompetencyModelService:
         await db.flush()
         await db.refresh(invite)
         matched_user = (await self._get_users_by_emails(db, [normalized_email])).get(normalized_email)
+        profession = getattr(model, "profession", None)
         return self._serialize_expert_invite(
             invite,
             model_name=model.name,
             profession_id=model.profession_id,
+            profession_name=profession.name if profession else None,
             status="added",
             matched_user=matched_user,
         )
@@ -283,10 +287,12 @@ class CompetencyModelService:
         await db.flush()
         await db.refresh(invite)
         matched_user = (await self._get_users_by_emails(db, [invite.email])).get(invite.email.strip().lower())
+        profession = getattr(model, "profession", None)
         return self._serialize_expert_invite(
             invite,
             model_name=model.name,
             profession_id=model.profession_id,
+            profession_name=profession.name if profession else None,
             status="added",
             matched_user=matched_user,
         )
@@ -558,15 +564,17 @@ class CompetencyModelService:
             )
             .order_by(ExpertInvite.created_at.desc())
         )
+        return_models = result.all()
         return [
             self._serialize_expert_invite(
                 invite,
                 model_name=model.name,
                 profession_id=model.profession_id,
+                profession_name=getattr(getattr(model, "profession", None), "name", None),
                 status="invited",
                 matched_user=user,
             )
-            for invite, model in result.all()
+            for invite, model in return_models
         ]
 
     async def get_pending_invite_count_for_user(self, db: AsyncSession, user_id: int) -> int:
@@ -1326,6 +1334,7 @@ class CompetencyModelService:
         *,
         model_name: str | None,
         profession_id: int | None,
+        profession_name: str | None,
         status: str,
         matched_user: User | None,
     ) -> ExpertInviteOut:
@@ -1339,6 +1348,7 @@ class CompetencyModelService:
             created_at=invite.created_at,
             model_name=model_name,
             profession_id=profession_id,
+            profession_name=profession_name,
             status=status,
             user=(
                 UserSummaryOut(
@@ -1448,6 +1458,7 @@ class CompetencyModelService:
                 invite,
                 model_name=model.name,
                 profession_id=model.profession_id,
+                profession_name=getattr(getattr(model, "profession", None), "name", None),
                 status="added" if model.status == ModelStatus.DRAFT else "invited",
                 matched_user=invite_users.get(invite.email.strip().lower()),
             )

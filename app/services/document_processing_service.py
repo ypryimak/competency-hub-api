@@ -39,6 +39,24 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower().strip())
 
 
+def _maybe_fix_duplicated_pdf_text(text: str) -> str:
+    alpha_chars = [char for char in text if char.isalpha()]
+    if len(alpha_chars) < 40:
+        return text
+
+    repeated_pairs = sum(
+        1 for index in range(len(alpha_chars) - 1) if alpha_chars[index].lower() == alpha_chars[index + 1].lower()
+    )
+    if repeated_pairs / max(len(alpha_chars) - 1, 1) < 0.35:
+        return text
+
+    def shrink_run(match: re.Match[str]) -> str:
+        run = match.group(0)
+        return run[0] * max(1, (len(run) + 1) // 2)
+
+    return re.sub(r"([A-Za-z])\1+", shrink_run, text)
+
+
 def extract_candidate_tokens(text: str, lang: str = "en") -> list[str]:
     """
     Extract candidate competency tokens from text using:
@@ -48,8 +66,9 @@ def extract_candidate_tokens(text: str, lang: str = "en") -> list[str]:
 
     Returns a normalized list of unique tokens.
     """
+    cleaned_text = _maybe_fix_duplicated_pdf_text(text)
     nlp = _get_nlp(lang)
-    doc = nlp(text)
+    doc = nlp(cleaned_text)
 
     tokens: set[str] = set()
 
@@ -202,8 +221,9 @@ class DocumentProcessingService:
         Returns:
             (matched_ids, matched_names, unrecognized_tokens)
         """
-        tokens = extract_candidate_tokens(text, lang)
-        return match_competencies(tokens, competency_map, source_text=text)
+        cleaned_text = _maybe_fix_duplicated_pdf_text(text)
+        tokens = extract_candidate_tokens(cleaned_text, lang)
+        return match_competencies(tokens, competency_map, source_text=cleaned_text)
 
 
 document_processing_service = DocumentProcessingService()

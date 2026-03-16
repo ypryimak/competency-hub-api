@@ -115,6 +115,7 @@ class ExpertInviteOut(BaseModel):
     created_at: datetime
     model_name: Optional[str] = None
     profession_id: Optional[int] = None
+    profession_name: Optional[str] = None
     status: Literal["added", "invited", "accepted"]
     user: Optional[UserSummaryOut] = None
 

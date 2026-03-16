@@ -19,6 +19,7 @@ from app.models.models import (
     CandidateScore,
     CandidateSelection,
     Competency,
+    CompetencyLabel,
     CompetencyModel,
     Profession,
     Selection,
@@ -297,12 +298,28 @@ class CandidateSelectionService:
                 filename=candidate.cv_original_filename,
                 content_type=candidate.cv_mime_type,
             )
-            competency_map = {
-                row.id: row.name
-                for row in (
-                    await db.execute(select(Competency.id, Competency.name))
-                ).all()
-            }
+            competency_rows = (
+                await db.execute(
+                    select(
+                        Competency.id,
+                        Competency.name,
+                        CompetencyLabel.label,
+                    )
+                    .outerjoin(
+                        CompetencyLabel,
+                        (CompetencyLabel.competency_id == Competency.id)
+                        & (CompetencyLabel.label_type.in_(("preferred", "alternative"))),
+                    )
+                    .order_by(Competency.id)
+                )
+            ).all()
+            competency_map: dict[int, list[str]] = {}
+            for row in competency_rows:
+                terms = competency_map.setdefault(row.id, [])
+                if row.name and row.name not in terms:
+                    terms.append(row.name)
+                if row.label and row.label not in terms:
+                    terms.append(row.label)
             matched_ids, matched_names, unrecognized = document_processing_service.parse_text(
                 text=cv_text,
                 competency_map=competency_map,
