@@ -556,6 +556,7 @@ class CompetencyModelService:
         normalized_email = user.email.strip().lower()
         result = await db.execute(
             select(ExpertInvite, CompetencyModel)
+            .options(selectinload(CompetencyModel.profession))
             .join(CompetencyModel, CompetencyModel.id == ExpertInvite.model_id)
             .where(
                 ExpertInvite.accepted_by_user_id.is_(None),
