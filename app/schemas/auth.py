@@ -43,6 +43,10 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class MessageResponse(BaseModel):
+    message: str
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 

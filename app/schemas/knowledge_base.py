@@ -55,6 +55,11 @@ class ProfessionListOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ProfessionListPageOut(BaseModel):
+    items: list["ProfessionListOut"]
+    total: int
+
+
 class ProfessionCreate(BaseModel):
     esco_uri: Optional[str] = None
     code: Optional[str] = None
@@ -222,6 +227,11 @@ class CompetencyListOut(CompetencyOut):
     aliases: list[str] = []
     group_names: list[str] = []
     collection_names: list[str] = []
+
+
+class CompetencyListPageOut(BaseModel):
+    items: list["CompetencyListOut"]
+    total: int
 
 
 class CompetencyDetailOut(CompetencyOut):

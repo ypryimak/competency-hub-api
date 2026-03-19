@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models.models import User
 from app.schemas.auth import (
     ForgotPasswordRequest,
+    MessageResponse,
     RefreshRequest,
     ResetPasswordRequest,
     TokenResponse,
@@ -70,7 +71,7 @@ async def update_me(
     return await auth_service.update_me(db, current_user, data)
 
 
-@router.post("/forgot-password", status_code=200)
+@router.post("/forgot-password", response_model=MessageResponse, status_code=200)
 @limiter.limit(settings.AUTH_FORGOT_PASSWORD_RATE_LIMIT)
 async def forgot_password(
     request: Request,
@@ -82,7 +83,7 @@ async def forgot_password(
     return {"message": "If the email exists in the system, a reset email will be sent"}
 
 
-@router.post("/reset-password", status_code=200)
+@router.post("/reset-password", response_model=MessageResponse, status_code=200)
 @limiter.limit(settings.AUTH_RESET_PASSWORD_RATE_LIMIT)
 async def reset_password(
     request: Request,

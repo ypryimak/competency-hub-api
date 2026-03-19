@@ -287,6 +287,7 @@ The script expects the ESCO zip path in `scripts/seed_knowledge_base.py`.
 
 Docs:
 - `http://127.0.0.1:8000/api/v1/docs`
+- `http://127.0.0.1:8000/api/v1/redoc`
 
 If you test a local frontend against a deployed API, add the local frontend origin to `BACKEND_CORS_ORIGINS`, for example:
 - `http://localhost:3000`

@@ -23,6 +23,7 @@ from app.schemas.knowledge_base import (
     CompetencyLabelOut,
     CompetencyLabelUpdate,
     CompetencyDetailOut,
+    CompetencyListPageOut,
     CompetencyListOut,
     CompetencyOut,
     CompetencyRelationCreate,
@@ -51,6 +52,7 @@ from app.schemas.knowledge_base import (
     ProfessionLabelCreate,
     ProfessionLabelOut,
     ProfessionLabelUpdate,
+    ProfessionListPageOut,
     ProfessionListOut,
     ProfessionOut,
     ProfessionUpdate,
@@ -124,7 +126,7 @@ async def delete_profession_group(
     await knowledge_base_service.delete_profession_group(db, group_id)
 
 
-@professions_router.get("/professions")
+@professions_router.get("/professions", response_model=ProfessionListPageOut)
 async def list_professions(
     limit: Optional[int] = Query(None, ge=1, le=10000),
     offset: int = Query(0, ge=0),
@@ -327,7 +329,7 @@ async def delete_competency_group(
     await knowledge_base_service.delete_competency_group(db, group_id)
 
 
-@competencies_router.get("/competencies")
+@competencies_router.get("/competencies", response_model=CompetencyListPageOut)
 async def list_competencies(
     limit: Optional[int] = Query(None, ge=1, le=10000),
     offset: int = Query(0, ge=0),
