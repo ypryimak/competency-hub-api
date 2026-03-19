@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict
 import io
 import secrets
@@ -310,10 +311,11 @@ class CandidateSelectionService:
 
         try:
             content = await storage_service.download_cv(candidate.cv_file_path)
-            cv_text = self._extract_text(
-                content=content,
-                filename=candidate.cv_original_filename,
-                content_type=candidate.cv_mime_type,
+            cv_text = await asyncio.to_thread(
+                self._extract_text,
+                content,
+                candidate.cv_original_filename,
+                candidate.cv_mime_type,
             )
             competency_rows = (
                 await db.execute(
@@ -337,9 +339,10 @@ class CandidateSelectionService:
                     terms.append(row.name)
                 if row.label and row.label not in terms:
                     terms.append(row.label)
-            matched_ids, matched_names, unrecognized = document_processing_service.parse_text(
-                text=cv_text,
-                competency_map=competency_map,
+            matched_ids, matched_names, unrecognized = await asyncio.to_thread(
+                document_processing_service.parse_text,
+                cv_text,
+                competency_map,
             )
             await db.execute(
                 delete(CandidateCompetency).where(CandidateCompetency.candidate_id == candidate_id)
