@@ -25,6 +25,7 @@ from app.services.competency_model_service import CompetencyModelService
 from app.services.email_service import email_service
 from app.services.activity_service import activity_service
 from app.services.opa_service import AlternativeInput, CriterionInput, ExpertInput, run_opa
+import app.services.competency_model_service as competency_model_service_module
 
 
 def test_user_out_exposes_role_code_and_string_role() -> None:
@@ -193,6 +194,120 @@ def test_filter_alternatives_uses_and_when_both_filters_are_set() -> None:
     filtered = service._filter_alternatives(model, alternatives, weights)
 
     assert [alt.id for alt in filtered] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_sync_draft_selections_for_model_rebuilds_selection_criteria() -> None:
+    service = CandidateSelectionService()
+    added: list[object] = []
+    selections = [SimpleNamespace(id=41), SimpleNamespace(id=42)]
+    alternatives = [
+        SimpleNamespace(
+            id=101,
+            competency_id=501,
+            custom_competency_id=None,
+            final_weight=0.7,
+            competency=SimpleNamespace(name="Analysis"),
+            custom_competency=None,
+        ),
+        SimpleNamespace(
+            id=102,
+            competency_id=None,
+            custom_competency_id=601,
+            final_weight=0.3,
+            competency=None,
+            custom_competency=SimpleNamespace(name="Custom Criterion"),
+        ),
+    ]
+    service._get_final_model_alternatives = AsyncMock(return_value=alternatives)
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: selections)),
+                SimpleNamespace(),
+            ]
+        ),
+        flush=AsyncMock(),
+        add=added.append,
+    )
+
+    synced_count = await service.sync_draft_selections_for_model(db, 9)
+
+    assert synced_count == 2
+    assert db.execute.await_count == 2
+    assert db.flush.await_count == 2
+    assert len(added) == 4
+    assert [(item.selection_id, item.alternative_id, item.name, item.weight) for item in added] == [
+        (41, 101, "Analysis", 0.7),
+        (41, 102, "Custom Criterion", 0.3),
+        (42, 101, "Analysis", 0.7),
+        (42, 102, "Custom Criterion", 0.3),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_calculate_opa_syncs_draft_selections_when_model_was_already_completed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CompetencyModelService()
+    model = SimpleNamespace(
+        id=10,
+        user_id=1,
+        status=ModelStatus.COMPLETED,
+        min_competency_weight=None,
+        max_competency_rank=None,
+    )
+    experts = [SimpleNamespace(id=11, rank=1, weight=None)]
+    criteria = [SimpleNamespace(id=21, weight=None)]
+    alternatives = [
+        SimpleNamespace(
+            id=31,
+            weight=None,
+            final_weight=None,
+            competency=SimpleNamespace(name="Analysis", competency_type="knowledge", description="desc"),
+            custom_competency=None,
+            competency_id=501,
+            custom_competency_id=None,
+            model_id=10,
+        )
+    ]
+    crit_ranks = [SimpleNamespace(criterion_id=21, expert_id=11, rank=1)]
+    alt_ranks = [SimpleNamespace(alternative_id=31, expert_id=11, criterion_id=21, rank=1)]
+    sync_mock = AsyncMock()
+    monkeypatch.setattr(
+        competency_model_service_module.candidate_selection_service,
+        "sync_draft_selections_for_model",
+        sync_mock,
+    )
+    monkeypatch.setattr(
+        competency_model_service_module,
+        "run_opa",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            solved=True,
+            message="ok",
+            expert_weights={11: 1.0},
+            criterion_weights={21: 1.0},
+            alternative_weights={31: 1.0},
+        ),
+    )
+
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: experts)),
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: crit_ranks)),
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: alt_ranks)),
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: criteria)),
+                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: alternatives)),
+            ]
+        ),
+        flush=AsyncMock(),
+    )
+
+    result = await service._calculate_opa_for_model(db, model)
+
+    assert result.status == "success"
+    sync_mock.assert_awaited_once_with(db, 10)
 
 
 @pytest.mark.asyncio

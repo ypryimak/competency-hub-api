@@ -59,6 +59,7 @@ from app.services.opa_service import (
 )
 from app.services.email_service import email_service
 from app.services.activity_service import activity_service
+from app.services.candidate_selection_service import candidate_selection_service
 
 LINK_TYPE_SCORES = {
     "esco_essential": 2.0,
@@ -840,6 +841,8 @@ class CompetencyModelService:
 
         model.status = ModelStatus.COMPLETED
         await db.flush()
+        if was_completed:
+            await candidate_selection_service.sync_draft_selections_for_model(db, model.id)
         if not was_completed:
             await activity_service.log(db, model.user_id, "model", model.id, "status_change", "expert_evaluation", "completed")
 

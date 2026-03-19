@@ -115,19 +115,7 @@ class CandidateSelectionService:
         if model.status != ModelStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="Only completed competency models can be used")
         self._validate_selection_deadline(data.evaluation_deadline)
-        final_alternatives = (
-            await db.execute(
-                select(Alternative)
-                .options(
-                    selectinload(Alternative.competency),
-                    selectinload(Alternative.custom_competency),
-                )
-                .where(
-                    Alternative.model_id == data.model_id,
-                    Alternative.final_weight.isnot(None),
-                )
-            )
-        ).scalars().all()
+        final_alternatives = await self._get_final_model_alternatives(db, data.model_id)
         if not final_alternatives:
             raise HTTPException(status_code=400, detail="Competency model has no final competencies")
         selection = Selection(
@@ -138,20 +126,37 @@ class CandidateSelectionService:
         )
         db.add(selection)
         await db.flush()
-        for alternative in final_alternatives:
-            db.add(
-                SelectionCriterion(
-                    selection_id=selection.id,
-                    alternative_id=alternative.id,
-                    competency_id=alternative.competency_id,
-                    custom_competency_id=alternative.custom_competency_id,
-                    name=self._resolve_selection_criterion_name(alternative),
-                    weight=alternative.final_weight,
-                )
-            )
+        for criterion in self._build_selection_criteria(selection.id, final_alternatives):
+            db.add(criterion)
         await db.flush()
         await db.refresh(selection)
         return selection
+
+    async def sync_draft_selections_for_model(self, db: AsyncSession, model_id: int) -> int:
+        selections = (
+            await db.execute(
+                select(Selection).where(
+                    Selection.model_id == model_id,
+                    Selection.status == SelectionStatus.DRAFT,
+                )
+            )
+        ).scalars().all()
+        if not selections:
+            return 0
+
+        final_alternatives = await self._get_final_model_alternatives(db, model_id)
+        selection_ids = [selection.id for selection in selections]
+        await db.execute(
+            delete(SelectionCriterion).where(SelectionCriterion.selection_id.in_(selection_ids))
+        )
+        await db.flush()
+
+        for selection in selections:
+            for criterion in self._build_selection_criteria(selection.id, final_alternatives):
+                db.add(criterion)
+
+        await db.flush()
+        return len(selections)
 
     async def update_selection(
         self, db: AsyncSession, selection_id: int, user_id: int, data: SelectionUpdate
@@ -972,6 +977,42 @@ class CandidateSelectionService:
                 )
             )
         ).scalars().all()
+
+    async def _get_final_model_alternatives(
+        self,
+        db: AsyncSession,
+        model_id: int,
+    ) -> list[Alternative]:
+        return (
+            await db.execute(
+                select(Alternative)
+                .options(
+                    selectinload(Alternative.competency),
+                    selectinload(Alternative.custom_competency),
+                )
+                .where(
+                    Alternative.model_id == model_id,
+                    Alternative.final_weight.isnot(None),
+                )
+            )
+        ).scalars().all()
+
+    def _build_selection_criteria(
+        self,
+        selection_id: int,
+        alternatives: Sequence[Alternative],
+    ) -> list[SelectionCriterion]:
+        return [
+            SelectionCriterion(
+                selection_id=selection_id,
+                alternative_id=alternative.id,
+                competency_id=alternative.competency_id,
+                custom_competency_id=alternative.custom_competency_id,
+                name=self._resolve_selection_criterion_name(alternative),
+                weight=alternative.final_weight,
+            )
+            for alternative in alternatives
+        ]
 
     async def _get_selection_criterion_ids(self, db: AsyncSession, selection_id: int) -> list[int]:
         return (
