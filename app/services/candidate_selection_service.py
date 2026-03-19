@@ -32,6 +32,7 @@ from app.models.models import (
 )
 from app.schemas.candidate_selection import (
     CVParseResponse,
+    CandidateCriterionScoreOut,
     CandidateCreate,
     CandidateCVSignedUrl,
     CandidateOut,
@@ -51,6 +52,7 @@ from app.schemas.candidate_selection import (
     SelectionExpertInviteCreate,
     SelectionExpertInviteOut,
     SelectionExpertInviteUpdate,
+    SelectionExpertUpdate,
     SelectionExpertOut,
     SelectionOut,
     SelectionUpdate,
@@ -412,9 +414,30 @@ class CandidateSelectionService:
         expert = SelectionExpert(
             selection_id=selection_id,
             user_id=data.user_id,
-            weight=data.weight,
+            weight=(
+                data.weight
+                if data.weight is not None
+                else await self._get_default_selection_expert_weight(db, selection_id)
+            ),
         )
         db.add(expert)
+        await db.flush()
+        await db.refresh(expert)
+        return expert
+
+    async def update_expert(
+        self,
+        db: AsyncSession,
+        selection_id: int,
+        expert_id: int,
+        user_id: int,
+        data: SelectionExpertUpdate,
+    ) -> SelectionExpert:
+        selection = await self._get_selection_orm(db, selection_id, user_id)
+        self._require_status(selection, SelectionStatus.DRAFT)
+        expert = await self._get_expert(db, expert_id, selection_id)
+        if data.weight is not None:
+            expert.weight = data.weight
         await db.flush()
         await db.refresh(expert)
         return expert
@@ -460,7 +483,11 @@ class CandidateSelectionService:
         invite = SelectionExpertInvite(
             selection_id=selection_id,
             email=normalized_email,
-            weight=data.weight,
+            weight=(
+                data.weight
+                if data.weight is not None
+                else await self._get_default_selection_expert_weight(db, selection_id)
+            ),
             token=secrets.token_urlsafe(24),
         )
         db.add(invite)
@@ -793,7 +820,11 @@ class CandidateSelectionService:
                 .where(SelectionExpert.selection_id == selection_id)
             )
         ).scalars().all()
-        criterion_weights = await self._get_selection_criterion_weights(db, selection_id)
+        criterion_details = await self._get_selection_criterion_details(db, selection_id)
+        criterion_weights = {
+            criterion_id: float(detail["weight"] or 0.0)
+            for criterion_id, detail in criterion_details.items()
+        }
         expert_weights = self._normalize_expert_weights(experts)
         aggregated: dict[tuple[int, int], float] = {}
         for score in all_scores:
@@ -832,13 +863,21 @@ class CandidateSelectionService:
                 )
             ).scalars().all()
         }
+        criterion_order = self._order_selection_criteria(criterion_details)
         return VIKORResult(
             ranked_candidates=[
                 CandidateRankOut(
                     candidate_id=item.candidate_id,
                     candidate_name=candidates[item.candidate_id].name if item.candidate_id in candidates else None,
+                    candidate_email=candidates[item.candidate_id].email if item.candidate_id in candidates else None,
                     score=item.q_score,
                     rank=item.rank,
+                    aggregated_scores=self._build_candidate_aggregated_scores(
+                        item.candidate_id,
+                        aggregated,
+                        criterion_order,
+                        criterion_details,
+                    ),
                 )
                 for item in sorted(vikor_results, key=lambda result: result.rank)
             ],
@@ -851,9 +890,26 @@ class CandidateSelectionService:
         selection = await self._get_selection_orm(db, selection_id, user_id)
         if selection.status != SelectionStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="Results are only available for completed selections")
+        experts = (
+            await db.execute(select(SelectionExpert).where(SelectionExpert.selection_id == selection_id))
+        ).scalars().all()
+        all_scores = (
+            await db.execute(
+                select(CandidateScore)
+                .join(SelectionExpert, SelectionExpert.id == CandidateScore.expert_id)
+                .where(SelectionExpert.selection_id == selection_id)
+            )
+        ).scalars().all()
+        criterion_details = await self._get_selection_criterion_details(db, selection_id)
+        criterion_order = self._order_selection_criteria(criterion_details)
+        expert_weights = self._normalize_expert_weights(experts) if experts else {}
+        aggregated: dict[tuple[int, int], float] = {}
+        for score in all_scores:
+            key = (score.candidate_id, score.selection_criterion_id)
+            aggregated[key] = aggregated.get(key, 0.0) + score.score * expert_weights.get(score.expert_id, 0.0)
         rows = (
             await db.execute(
-                select(CandidateSelection, Candidate.name)
+                select(CandidateSelection, Candidate.name, Candidate.email)
                 .join(Candidate, Candidate.id == CandidateSelection.candidate_id)
                 .where(CandidateSelection.selection_id == selection_id)
                 .order_by(CandidateSelection.rank)
@@ -864,8 +920,15 @@ class CandidateSelectionService:
                 CandidateRankOut(
                     candidate_id=row.CandidateSelection.candidate_id,
                     candidate_name=row.name,
+                    candidate_email=row.email,
                     score=float(row.CandidateSelection.score or 0),
                     rank=row.CandidateSelection.rank or 0,
+                    aggregated_scores=self._build_candidate_aggregated_scores(
+                        row.CandidateSelection.candidate_id,
+                        aggregated,
+                        criterion_order,
+                        criterion_details,
+                    ),
                 )
                 for row in rows
             ],
@@ -965,6 +1028,22 @@ class CandidateSelectionService:
             raise HTTPException(status_code=404, detail="Expert invite not found")
         return invite
 
+    async def _get_default_selection_expert_weight(self, db: AsyncSession, selection_id: int) -> float:
+        expert_count = (
+            await db.execute(
+                select(func.count(SelectionExpert.id)).where(SelectionExpert.selection_id == selection_id)
+            )
+        ).scalar_one()
+        pending_invite_count = (
+            await db.execute(
+                select(func.count(SelectionExpertInvite.id)).where(
+                    SelectionExpertInvite.selection_id == selection_id,
+                    SelectionExpertInvite.accepted_by_user_id.is_(None),
+                )
+            )
+        ).scalar_one()
+        return 1.0 if (expert_count + pending_invite_count) == 0 else 0.0
+
     async def _get_expert_invite_by_token(self, db: AsyncSession, token: str) -> SelectionExpertInvite:
         result = await db.execute(select(SelectionExpertInvite).where(SelectionExpertInvite.token == token))
         invite = result.scalar_one_or_none()
@@ -1026,18 +1105,59 @@ class CandidateSelectionService:
             )
         ).scalars().all()
 
-    async def _get_selection_criterion_weights(
+    async def _get_selection_criterion_details(
         self, db: AsyncSession, selection_id: int
-    ) -> dict[int, float]:
+    ) -> dict[int, dict[str, object]]:
         result = await db.execute(
-            select(SelectionCriterion.id, SelectionCriterion.weight).where(
+            select(
+                SelectionCriterion.id,
+                SelectionCriterion.name,
+                SelectionCriterion.competency_id,
+                SelectionCriterion.weight,
+            ).where(
                 SelectionCriterion.selection_id == selection_id
             )
         )
         return {
-            row.id: float(row.weight) if row.weight is not None else 0.0
+            row.id: {
+                "name": row.name,
+                "competency_id": row.competency_id,
+                "weight": float(row.weight) if row.weight is not None else 0.0,
+            }
             for row in result.all()
         }
+
+    def _order_selection_criteria(self, criterion_details: dict[int, dict[str, object]]) -> list[int]:
+        return sorted(
+            criterion_details.keys(),
+            key=lambda criterion_id: (
+                -float(criterion_details[criterion_id]["weight"] or 0.0),
+                str(criterion_details[criterion_id]["name"] or ""),
+                criterion_id,
+            ),
+        )
+
+    def _build_candidate_aggregated_scores(
+        self,
+        candidate_id: int,
+        aggregated: dict[tuple[int, int], float],
+        criterion_order: list[int],
+        criterion_details: dict[int, dict[str, object]],
+    ) -> list[CandidateCriterionScoreOut]:
+        return [
+            CandidateCriterionScoreOut(
+                selection_criterion_id=criterion_id,
+                criterion_name=str(criterion_details[criterion_id]["name"] or ""),
+                competency_id=(
+                    int(criterion_details[criterion_id]["competency_id"])
+                    if criterion_details[criterion_id]["competency_id"] is not None
+                    else None
+                ),
+                weight=float(criterion_details[criterion_id]["weight"] or 0.0),
+                aggregated_score=round(aggregated.get((candidate_id, criterion_id), 0.0), 6),
+            )
+            for criterion_id in criterion_order
+        ]
 
     def _normalize_expert_weights(self, experts: list[SelectionExpert]) -> dict[int, float]:
         weights = {item.id: float(item.weight) if item.weight else 1.0 for item in experts}

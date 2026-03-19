@@ -115,6 +115,10 @@ class SelectionExpertCreate(BaseModel):
     weight: Optional[float] = None
 
 
+class SelectionExpertUpdate(BaseModel):
+    weight: Optional[float] = None
+
+
 class SelectionExpertOut(BaseModel):
     id: int
     selection_id: int
@@ -180,11 +184,21 @@ class ExpertSelectionDetail(SelectionDetail):
     current_scores: list[ExpertCandidateScoreOut] = []
 
 
+class CandidateCriterionScoreOut(BaseModel):
+    selection_criterion_id: int
+    criterion_name: str
+    competency_id: Optional[int] = None
+    weight: float
+    aggregated_score: float
+
+
 class CandidateRankOut(BaseModel):
     candidate_id: int
     candidate_name: Optional[str]
+    candidate_email: Optional[str] = None
     score: float
     rank: int
+    aggregated_scores: list[CandidateCriterionScoreOut] = []
 
 
 class VIKORResult(BaseModel):

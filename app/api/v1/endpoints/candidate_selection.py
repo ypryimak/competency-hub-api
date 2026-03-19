@@ -27,6 +27,7 @@ from app.schemas.candidate_selection import (
     SelectionExpertInviteCreate,
     SelectionExpertInviteOut,
     SelectionExpertInviteUpdate,
+    SelectionExpertUpdate,
     SelectionExpertOut,
     SelectionOut,
     SelectionUpdate,
@@ -262,6 +263,23 @@ async def remove_expert(
 ):
     await candidate_selection_service.remove_expert(
         db, selection_id, current_user.id, expert_id
+    )
+
+
+@router.patch(
+    "/selections/{selection_id}/experts/{expert_id}",
+    response_model=SelectionExpertOut,
+    tags=["Candidate Selection"],
+)
+async def update_expert(
+    selection_id: int,
+    expert_id: int,
+    data: SelectionExpertUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await candidate_selection_service.update_expert(
+        db, selection_id, expert_id, current_user.id, data
     )
 
 
