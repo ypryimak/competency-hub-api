@@ -21,6 +21,7 @@ from app.models.models import (
     Competency,
     CompetencyLabel,
     CompetencyModel,
+    ProfessionCompetency,
     Profession,
     Selection,
     SelectionCriterion,
@@ -113,6 +114,7 @@ class CandidateSelectionService:
             raise HTTPException(status_code=404, detail="Competency model not found")
         if model.status != ModelStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="Only completed competency models can be used")
+        self._validate_selection_deadline(data.evaluation_deadline)
         final_alternatives = (
             await db.execute(
                 select(Alternative)
@@ -155,8 +157,11 @@ class CandidateSelectionService:
         self, db: AsyncSession, selection_id: int, user_id: int, data: SelectionUpdate
     ) -> Selection:
         selection = await self._get_selection_orm(db, selection_id, user_id)
-        self._require_status(selection, SelectionStatus.DRAFT)
+        if selection.status not in (SelectionStatus.DRAFT, SelectionStatus.EXPERT_EVALUATION):
+            current = SelectionStatus(selection.status).name if selection.status is not None else "None"
+            raise HTTPException(status_code=400, detail=f"Operation is unavailable in status {current}")
         if data.evaluation_deadline is not None:
+            self._validate_selection_deadline(data.evaluation_deadline)
             selection.evaluation_deadline = data.evaluation_deadline
         await db.flush()
         await db.refresh(selection)
@@ -187,7 +192,12 @@ class CandidateSelectionService:
         self, db: AsyncSession, candidate_id: int, user_id: int
     ) -> CandidateWithCompetencies:
         candidate = await self._get_candidate_orm(db, candidate_id, user_id)
-        return self._serialize_candidate(candidate)
+        competency_link_types = await self._get_candidate_competency_link_types(
+            db,
+            candidate.profession_id,
+            [item.competency_id for item in candidate.competencies],
+        )
+        return self._serialize_candidate(candidate, competency_link_types=competency_link_types)
 
     async def create_candidate(self, db: AsyncSession, data: CandidateCreate, user_id: int) -> CandidateOut:
         profession = (
@@ -195,10 +205,12 @@ class CandidateSelectionService:
         ).scalar_one_or_none()
         if not profession:
             raise HTTPException(status_code=404, detail="Profession not found")
+        normalized_email = data.email.strip().lower()
+        await self._ensure_candidate_email_available(db, user_id, normalized_email)
         candidate = Candidate(
             user_id=user_id,
             name=data.name,
-            email=data.email,
+            email=normalized_email,
             profession_id=data.profession_id,
             cv_parse_status=CandidateCVParseStatus.NOT_UPLOADED,
         )
@@ -496,6 +508,7 @@ class CandidateSelectionService:
             raise HTTPException(status_code=400, detail="Add at least one candidate")
         if not selection.experts and not pending_invites:
             raise HTTPException(status_code=400, detail="Add at least one expert or invite")
+        self._validate_selection_deadline(selection.evaluation_deadline)
         selection.status = SelectionStatus.EXPERT_EVALUATION
         await db.flush()
         for invite in pending_invites:
@@ -1158,7 +1171,13 @@ class CandidateSelectionService:
             current_scores=current_scores or [],
         )
 
-    def _serialize_candidate(self, candidate: Candidate) -> CandidateWithCompetencies:
+    def _serialize_candidate(
+        self,
+        candidate: Candidate,
+        *,
+        competency_link_types: dict[int, list[str]] | None = None,
+    ) -> CandidateWithCompetencies:
+        link_types_map = competency_link_types or {}
         return CandidateWithCompetencies(
             id=candidate.id,
             user_id=candidate.user_id,
@@ -1175,7 +1194,12 @@ class CandidateSelectionService:
             matched_competency_count=len(candidate.competencies),
             created_at=candidate.created_at,
             competencies=[
-                CompetencyShort(id=item.competency.id, name=item.competency.name)
+                CompetencyShort(
+                    id=item.competency.id,
+                    name=item.competency.name,
+                    description=item.competency.description,
+                    link_types=link_types_map.get(item.competency.id, []),
+                )
                 for item in candidate.competencies
                 if item.competency is not None
             ],
@@ -1262,10 +1286,59 @@ class CandidateSelectionService:
 
     def _resolve_candidate_cv_parse_status(self, candidate: Candidate) -> CandidateCVParseStatus:
         if candidate.cv_parse_status is not None:
-            return CandidateCVParseStatus(candidate.cv_parse_status)
+            try:
+                return CandidateCVParseStatus(candidate.cv_parse_status)
+            except ValueError:
+                if candidate.cv_file_path:
+                    return CandidateCVParseStatus.UPLOADED
+                return CandidateCVParseStatus.NOT_UPLOADED
         if candidate.cv_file_path:
             return CandidateCVParseStatus.UPLOADED
         return CandidateCVParseStatus.NOT_UPLOADED
+
+    def _validate_selection_deadline(self, deadline: datetime | None) -> None:
+        if deadline is None:
+            return
+        normalized_deadline = deadline if deadline.tzinfo is not None else deadline.replace(tzinfo=timezone.utc)
+        if normalized_deadline <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="Evaluation deadline must be in the future")
+
+    async def _ensure_candidate_email_available(self, db: AsyncSession, user_id: int, email: str) -> None:
+        existing = (
+            await db.execute(
+                select(Candidate.id).where(
+                    Candidate.user_id == user_id,
+                    func.lower(Candidate.email) == email,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="Candidate with this email already exists")
+
+    async def _get_candidate_competency_link_types(
+        self,
+        db: AsyncSession,
+        profession_id: int,
+        competency_ids: list[int],
+    ) -> dict[int, list[str]]:
+        if not competency_ids:
+            return {}
+
+        rows = (
+            await db.execute(
+                select(ProfessionCompetency.competency_id, ProfessionCompetency.link_type)
+                .where(
+                    ProfessionCompetency.profession_id == profession_id,
+                    ProfessionCompetency.competency_id.in_(competency_ids),
+                )
+                .order_by(ProfessionCompetency.competency_id, ProfessionCompetency.link_type)
+            )
+        ).all()
+        result: dict[int, list[str]] = defaultdict(list)
+        for competency_id, link_type in rows:
+            if link_type not in result[competency_id]:
+                result[competency_id].append(link_type)
+        return result
 
     async def _persist_candidate_parse_failure(
         self,

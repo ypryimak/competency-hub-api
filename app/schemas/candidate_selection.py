@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, Field, computed_field
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, computed_field
 
 from app.core.enums import CandidateCVParseStatus, WorkflowStatusName, get_workflow_status_name
 from app.schemas.common import UserSummaryOut
@@ -47,7 +47,7 @@ class SelectionDetail(SelectionOut):
 
 class CandidateCreate(BaseModel):
     name: Optional[str] = None
-    email: Optional[str] = None
+    email: EmailStr
     profession_id: int
 
 
@@ -77,6 +77,8 @@ class CandidateWithCompetencies(CandidateOut):
 class CompetencyShort(BaseModel):
     id: int
     name: str
+    description: Optional[str] = None
+    link_types: list[str] = []
 
     model_config = {"from_attributes": True}
 

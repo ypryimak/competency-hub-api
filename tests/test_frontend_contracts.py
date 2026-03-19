@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from app.core.enums import ModelStatus, SelectionStatus
 from app.schemas.activity import ActivityLogOut
 from app.schemas.auth import UserOut, UserRegister
-from app.schemas.candidate_selection import CandidateOut, ExpertCandidateScoreOut, SelectionOut
+from app.schemas.candidate_selection import CandidateCreate, CandidateOut, ExpertCandidateScoreOut, SelectionOut
 from app.schemas.competency_model import (
     CompetencyModelOut,
     CompetencyModelUpdate,
@@ -254,6 +254,56 @@ async def test_selection_and_candidate_serializers_include_frontend_metadata() -
     assert selection_payload["status_code"] == 1
     assert selection_payload["status"] == "draft"
     assert selection_payload["experts"][0]["user"]["email"] == "selection-expert@example.com"
+
+
+@pytest.mark.asyncio
+async def test_candidate_serializer_includes_description_and_link_types() -> None:
+    service = CandidateSelectionService()
+    candidate = SimpleNamespace(
+        id=21,
+        user_id=2,
+        name="Candidate",
+        email="candidate@example.com",
+        profession_id=4,
+        cv_file_path=None,
+        cv_original_filename=None,
+        cv_mime_type=None,
+        cv_uploaded_at=None,
+        cv_parse_status="parsed",
+        cv_parsed_at=datetime.now(timezone.utc),
+        cv_parse_error=None,
+        created_at=datetime.now(timezone.utc),
+        competencies=[
+            SimpleNamespace(
+                competency_id=8,
+                competency=SimpleNamespace(
+                    id=8,
+                    name="Project management",
+                    description="Coordinate scope, timelines, and stakeholders.",
+                ),
+            )
+        ],
+    )
+
+    payload = service._serialize_candidate(
+        candidate,
+        competency_link_types={8: ["esco_essential", "job_derived"]},
+    ).model_dump(mode="json")
+
+    assert payload["competencies"][0]["description"] == "Coordinate scope, timelines, and stakeholders."
+    assert payload["competencies"][0]["link_types"] == ["esco_essential", "job_derived"]
+
+
+@pytest.mark.asyncio
+async def test_create_candidate_rejects_duplicate_email_per_user() -> None:
+    service = CandidateSelectionService()
+    db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: 44)))
+
+    with pytest.raises(HTTPException) as exc:
+        await service._ensure_candidate_email_available(db, 7, "candidate@example.com")
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "Candidate with this email already exists"
 
 
 @pytest.mark.asyncio
@@ -569,6 +619,7 @@ async def test_submit_selection_sends_pending_selection_invites(
         id=11,
         user_id=7,
         status=SelectionStatus.DRAFT,
+        evaluation_deadline=datetime.now(timezone.utc) + timedelta(days=1),
         experts=[],
         expert_invites=[pending_invite],
         candidates=[SimpleNamespace(candidate_id=1)],
