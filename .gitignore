@@ -19,6 +19,7 @@ __pycache__/
 *.json
 tmp_esco_*/
 ESCO dataset - *.zip
+scripts/qa_seed_profiles.sql
 !.vscode/*.json
 
 # Logs
