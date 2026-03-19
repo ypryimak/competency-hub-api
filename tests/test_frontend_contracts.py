@@ -675,6 +675,109 @@ async def test_selection_detail_serialization_marks_completed_experts_and_pendin
 
 
 @pytest.mark.asyncio
+async def test_selection_detail_serialization_includes_criterion_descriptions() -> None:
+    service = CandidateSelectionService()
+    service._get_selection_expert_completion_map = AsyncMock(return_value={})
+    service._get_users_by_emails = AsyncMock(return_value={})
+    selection = SimpleNamespace(
+        id=18,
+        user_id=4,
+        model_id=22,
+        evaluation_deadline=None,
+        status=1,
+        created_at=datetime.now(timezone.utc),
+        candidates=[],
+        experts=[],
+        criteria=[
+            SimpleNamespace(
+                id=71,
+                selection_id=18,
+                alternative_id=91,
+                competency_id=301,
+                custom_competency_id=None,
+                name="Data analysis",
+                weight=Decimal("0.35"),
+                alternative=SimpleNamespace(
+                    competency=SimpleNamespace(description="Interpret structured and unstructured data."),
+                    custom_competency=None,
+                ),
+                competency=None,
+                custom_competency=None,
+            )
+        ],
+        expert_invites=[],
+    )
+
+    payload = (
+        await service._serialize_selection_detail(SimpleNamespace(), selection)
+    ).model_dump(mode="json")
+
+    assert payload["criteria"][0]["description"] == "Interpret structured and unstructured data."
+
+
+@pytest.mark.asyncio
+async def test_selection_detail_serialization_includes_matched_criterion_ids() -> None:
+    service = CandidateSelectionService()
+    service._get_selection_expert_completion_map = AsyncMock(return_value={})
+    service._get_users_by_emails = AsyncMock(return_value={})
+    selection = SimpleNamespace(
+        id=19,
+        user_id=4,
+        model_id=22,
+        evaluation_deadline=None,
+        status=1,
+        created_at=datetime.now(timezone.utc),
+        candidates=[
+            SimpleNamespace(
+                candidate_id=51,
+                selection_id=19,
+                score=None,
+                rank=None,
+                candidate=SimpleNamespace(
+                    name="Matched Candidate",
+                    email="matched@example.com",
+                    competencies=[SimpleNamespace(competency_id=301), SimpleNamespace(competency_id=404)],
+                ),
+            )
+        ],
+        experts=[],
+        criteria=[
+            SimpleNamespace(
+                id=71,
+                selection_id=19,
+                alternative_id=91,
+                competency_id=301,
+                custom_competency_id=None,
+                name="Data analysis",
+                weight=Decimal("0.35"),
+                alternative=None,
+                competency=None,
+                custom_competency=None,
+            ),
+            SimpleNamespace(
+                id=72,
+                selection_id=19,
+                alternative_id=92,
+                competency_id=999,
+                custom_competency_id=None,
+                name="Research methods",
+                weight=Decimal("0.20"),
+                alternative=None,
+                competency=None,
+                custom_competency=None,
+            ),
+        ],
+        expert_invites=[],
+    )
+
+    payload = (
+        await service._serialize_selection_detail(SimpleNamespace(), selection)
+    ).model_dump(mode="json")
+
+    assert payload["candidates"][0]["matched_criterion_ids"] == [71]
+
+
+@pytest.mark.asyncio
 async def test_create_selection_expert_invite_returns_added_status_and_matched_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

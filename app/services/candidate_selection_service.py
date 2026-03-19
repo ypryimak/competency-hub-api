@@ -955,9 +955,14 @@ class CandidateSelectionService:
             select(Selection)
             .where(Selection.id == selection_id)
             .options(
-                selectinload(Selection.candidates).selectinload(CandidateSelection.candidate),
+                selectinload(Selection.candidates)
+                .selectinload(CandidateSelection.candidate)
+                .selectinload(Candidate.competencies),
                 selectinload(Selection.experts).selectinload(SelectionExpert.user),
-                selectinload(Selection.criteria),
+                selectinload(Selection.criteria).selectinload(SelectionCriterion.alternative).selectinload(Alternative.competency),
+                selectinload(Selection.criteria).selectinload(SelectionCriterion.alternative).selectinload(Alternative.custom_competency),
+                selectinload(Selection.criteria).selectinload(SelectionCriterion.competency),
+                selectinload(Selection.criteria).selectinload(SelectionCriterion.custom_competency),
                 selectinload(Selection.expert_invites),
             )
         )
@@ -1296,6 +1301,11 @@ class CandidateSelectionService:
             selection.id,
             [expert.id for expert in selection.experts],
         )
+        criterion_competency_pairs = [
+            (criterion.id, criterion.competency_id)
+            for criterion in selection.criteria
+            if criterion.competency_id is not None
+        ]
         pending_invites = [invite for invite in selection.expert_invites if invite.accepted_by_user_id is None]
         matched_users = await self._get_users_by_emails(db, [invite.email for invite in pending_invites])
         return ExpertSelectionDetail(
@@ -1313,6 +1323,16 @@ class CandidateSelectionService:
                     rank=item.rank,
                     candidate_name=item.candidate.name if item.candidate else None,
                     candidate_email=item.candidate.email if item.candidate else None,
+                    matched_criterion_ids=(
+                        [
+                            criterion_id
+                            for criterion_id, competency_id in criterion_competency_pairs
+                            if competency_id
+                            in {candidate_competency.competency_id for candidate_competency in item.candidate.competencies}
+                        ]
+                        if item.candidate is not None
+                        else []
+                    ),
                 )
                 for item in selection.candidates
             ],
@@ -1323,7 +1343,19 @@ class CandidateSelectionService:
                 )
                 for item in selection.experts
             ],
-            criteria=[SelectionCriterionOut.model_validate(item) for item in selection.criteria],
+            criteria=[
+                SelectionCriterionOut(
+                    id=item.id,
+                    selection_id=item.selection_id,
+                    alternative_id=item.alternative_id,
+                    competency_id=item.competency_id,
+                    custom_competency_id=item.custom_competency_id,
+                    name=item.name,
+                    description=self._resolve_selection_criterion_description(item),
+                    weight=float(item.weight) if item.weight is not None else None,
+                )
+                for item in selection.criteria
+            ],
             expert_invites=[
                 self._serialize_expert_invite(
                     item,
@@ -1334,6 +1366,19 @@ class CandidateSelectionService:
             ],
             current_scores=current_scores or [],
         )
+
+    def _resolve_selection_criterion_description(self, criterion: SelectionCriterion) -> str | None:
+        if criterion.alternative is not None:
+            if criterion.alternative.competency is not None:
+                return criterion.alternative.competency.description
+            if criterion.alternative.custom_competency is not None:
+                return criterion.alternative.custom_competency.description
+
+        if criterion.competency is not None:
+            return criterion.competency.description
+        if criterion.custom_competency is not None:
+            return criterion.custom_competency.description
+        return None
 
     def _serialize_candidate(
         self,

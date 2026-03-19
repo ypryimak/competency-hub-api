@@ -90,6 +90,7 @@ class CandidateSelectionOut(BaseModel):
     rank: Optional[int]
     candidate_name: Optional[str] = None
     candidate_email: Optional[str] = None
+    matched_criterion_ids: list[int] = []
 
     model_config = {"from_attributes": True}
 
@@ -213,6 +214,7 @@ class SelectionCriterionOut(BaseModel):
     competency_id: Optional[int] = None
     custom_competency_id: Optional[int] = None
     name: str
+    description: Optional[str] = None
     weight: Optional[float] = None
 
     model_config = {"from_attributes": True, "protected_namespaces": ()}
