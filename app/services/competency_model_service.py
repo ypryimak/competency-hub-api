@@ -140,6 +140,7 @@ class CompetencyModelService:
         await db.flush()
         await self._load_default_alternatives(db, model)
         await db.refresh(model)
+        await activity_service.log(db, model.user_id, "model", model.id, "created")
         return model
 
     async def update_model(
@@ -709,7 +710,9 @@ class CompetencyModelService:
 
         await db.flush()
         if not had_existing_submission:
-            await activity_service.log(db, model.user_id, "model", model_id, "evaluation_submitted", None, str(expert.id))
+            user = await db.get(User, current_user_id)
+            user_email = user.email if user else f"user_{current_user_id}"
+            await activity_service.log(db, model.user_id, "model", model_id, "evaluation_submitted", None, user_email)
             await email_service.send_competency_model_submission_received(db, model_id, current_user_id)
         return await self.get_expert_evaluation_status(db, model_id, current_user_id)
 

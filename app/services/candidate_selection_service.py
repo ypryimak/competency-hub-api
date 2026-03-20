@@ -133,6 +133,7 @@ class CandidateSelectionService:
             db.add(criterion)
         await db.flush()
         await db.refresh(selection)
+        await activity_service.log(db, selection.user_id, "selection", selection.id, "created")
         return selection
 
     async def sync_draft_selections_for_model(self, db: AsyncSession, model_id: int) -> int:
@@ -613,7 +614,9 @@ class CandidateSelectionService:
             )
         await db.flush()
         if not had_existing_submission:
-            await activity_service.log(db, selection.user_id, "selection", selection_id, "evaluation_submitted", None, str(expert.id))
+            user = await db.get(User, current_user_id)
+            user_email = user.email if user else f"user_{current_user_id}"
+            await activity_service.log(db, selection.user_id, "selection", selection_id, "evaluation_submitted", None, user_email)
             await email_service.send_selection_submission_received(db, selection_id, current_user_id)
         return await self.get_expert_scoring_status(db, selection_id, current_user_id)
 
